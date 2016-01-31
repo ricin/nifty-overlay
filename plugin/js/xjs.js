@@ -1,3 +1,8 @@
+/****************************
+ * XSplit JS Framework
+ * version: 1.0.0
+ * (c) 2015 SplitmediaLabs, inc.
+ ****************************/
 require=(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
 /// <reference path="../../defs/es6-promise.d.ts" />
 var app_1 = require('../internal/app');
@@ -5,6 +10,8 @@ var rectangle_1 = require('../util/rectangle');
 var audio_1 = require('../system/audio');
 var json_1 = require('../internal/util/json');
 var xml_1 = require('../internal/util/xml');
+var internal_1 = require('../internal/internal');
+var environment_1 = require('./environment');
 var transition_1 = require('./transition');
 var DEFAULT_SILENCE_DETECTION_THRESHOLD = 5;
 var DEFAULT_SILENCE_DETECTION_PERIOD = 1000;
@@ -22,6 +29,13 @@ var DEFAULT_SILENCE_DETECTION_PERIOD = 1000;
  *   window.frametime = frametime;
  * });
  * ```
+ *
+ * For methods referring to application audio
+ * (i.e. mic and speaker settings, silence detection, etc.).
+ * This will affect XBC settings
+ * but will not be reflected in the General Settings Window
+ * (also will not be persistent after logging out of/exiting the application).
+ *
  */
 var App = (function () {
     function App() {
@@ -49,7 +63,7 @@ var App = (function () {
     /**
      * return: Promise<Rectangle>
      *
-     * Gets application default output resolution.
+     * Gets application default output resolution in pixels.
      *
      * See also: {@link #util/Rectangle Util/Rectangle}
      *
@@ -97,7 +111,7 @@ var App = (function () {
     /**
      * return: Promise<string>
      *
-     * Refers to XSplit Broadcaster DLL file version number
+     * Refers to XSplit Broadcaster version number
      *
      * #### Usage
      *
@@ -108,8 +122,15 @@ var App = (function () {
      * ```
      */
     App.prototype.getVersion = function () {
-        return new Promise(function (resolve) {
-            resolve(app_1.App.get('version'));
+        return new Promise(function (resolve, reject) {
+            var xbcPattern = /XSplit Broadcaster\s(.*?)\s/;
+            var xbcMatch = navigator.appVersion.match(xbcPattern);
+            if (xbcMatch !== null) {
+                resolve(xbcMatch[1]);
+            }
+            else {
+                reject(Error('not loaded in XSplit Broadcaster'));
+            }
         });
     };
     /**
@@ -149,7 +170,7 @@ var App = (function () {
      * ```
      */
     App.prototype.getPrimaryMic = function () {
-        return new Promise(function (resolve) {
+        return new Promise(function (resolve, reject) {
             app_1.App.getAsList('microphonedev2').then(function (arr) {
                 var audioDevices = arr.map(function (val) {
                     return audio_1.AudioDevice.parse(val);
@@ -158,7 +179,7 @@ var App = (function () {
                     resolve(audioDevices[0]);
                 }
                 else {
-                    resolve(new audio_1.AudioDevice({ id: 'empty' }));
+                    reject(Error('No audio device is set as primary microphone'));
                 }
             });
         });
@@ -179,7 +200,7 @@ var App = (function () {
      * ```
      */
     App.prototype.getPrimarySpeaker = function () {
-        return new Promise(function (resolve) {
+        return new Promise(function (resolve, reject) {
             app_1.App.getAsList('microphonedev2').then(function (arr) {
                 var audioDevices = arr.map(function (val) {
                     return audio_1.AudioDevice.parse(val);
@@ -188,84 +209,462 @@ var App = (function () {
                     resolve(audioDevices[1]);
                 }
                 else {
-                    resolve(new audio_1.AudioDevice({ id: 'empty' }));
+                    reject(Error('No audio device is set as primary speaker'));
                 }
             });
         });
     };
     /**
-     * param: (device: AudioDevice)
+     * param: volume<number> (0 to 100 normal range, > 100 will boost volume level)
      * ```
      * return: Promise<boolean>
      * ```
      *
-     * Sets the primary microphone device to be used in the application
-     *
-     * See also: {@link #system/AudioDevice System/AudioDevice}
+     * Sets the application audio level of the primary microphone set
      *
      * ### Usage
      *
      * ```javascript
-     * App.setPrimaryMic(device).then(function(val) {
+     * App.setPrimaryMicLevel(volume).then(function(val) {
      *   var isSet = val;
      * });
      * ```
      */
-    App.prototype.setPrimaryMic = function (device) {
-        return new Promise(function (resolve) {
+    App.prototype.setPrimaryMicLevel = function (volume) {
+        return new Promise(function (resolve, reject) {
+            if (volume < 0) {
+                reject(Error('Volume can only be positive'));
+            }
             app_1.App.getAsList('microphonedev2').then(function (arr) {
                 var audioDevices = arr.map(function (val) {
                     return audio_1.AudioDevice.parse(val);
                 });
-                audioDevices[0] = device;
-                var dev = '';
-                if (Array.isArray(audioDevices)) {
-                    for (var i = 0; i < audioDevices.length; ++i) {
-                        dev += audioDevices[i].toString();
+                if (audioDevices.length && audioDevices.length > 0) {
+                    var micDevice = audioDevices[0];
+                    micDevice._setLevel(volume);
+                    audioDevices[0] = micDevice;
+                    var dev = '';
+                    if (Array.isArray(audioDevices)) {
+                        for (var i = 0; i < audioDevices.length; ++i) {
+                            dev += audioDevices[i].toString();
+                        }
                     }
+                    dev = '<devices>' + dev + '</devices>';
+                    app_1.App.set('microphonedev2', dev).then(function (setVal) {
+                        resolve(setVal);
+                    });
                 }
-                dev = '<devices>' + dev + '</devices>';
-                app_1.App.set('microphonedev2', dev).then(function (setVal) {
-                    resolve(setVal);
-                });
+                else {
+                    reject(Error('No audio device is set as primary microphone'));
+                }
             });
         });
     };
     /**
-     * param: (device: AudioDevice)
+     * param: enabled<boolean>
      * ```
      * return: Promise<boolean>
      * ```
      *
-     * Sets the primary speaker/audio render device to be used in the application
-     *
-     * See also: {@link #system/AudioDevice System/AudioDevice}
+     * Sets whether the primary microphone set is enabled or disabled in the applicaation
      *
      * ### Usage
      *
      * ```javascript
-     * App.setPrimarySpeaker(device).then(function(val) {
+     * App.setPrimaryMicEnabled(enabled).then(function(val) {
      *   var isSet = val;
      * });
      * ```
      */
-    App.prototype.setPrimarySpeaker = function (device) {
-        return new Promise(function (resolve) {
+    App.prototype.setPrimaryMicEnabled = function (enabled) {
+        return new Promise(function (resolve, reject) {
             app_1.App.getAsList('microphonedev2').then(function (arr) {
                 var audioDevices = arr.map(function (val) {
                     return audio_1.AudioDevice.parse(val);
                 });
-                audioDevices[1] = device;
-                var dev = '';
-                if (Array.isArray(audioDevices)) {
-                    for (var i = 0; i < audioDevices.length; ++i) {
-                        dev += audioDevices[i].toString();
+                if (audioDevices.length && audioDevices.length > 0) {
+                    var micDevice = audioDevices[0];
+                    micDevice._setEnabled(enabled);
+                    audioDevices[0] = micDevice;
+                    var dev = '';
+                    if (Array.isArray(audioDevices)) {
+                        for (var i = 0; i < audioDevices.length; ++i) {
+                            dev += audioDevices[i].toString();
+                        }
                     }
+                    dev = '<devices>' + dev + '</devices>';
+                    app_1.App.set('microphonedev2', dev).then(function (setVal) {
+                        resolve(setVal);
+                    });
                 }
-                dev = '<devices>' + dev + '</devices>';
-                app_1.App.set('microphonedev2', dev).then(function (setVal) {
-                    resolve(setVal);
+                else {
+                    reject(Error('No audio device is set as primary microphone'));
+                }
+            });
+        });
+    };
+    /**
+     * param: volume<number> (0 to 100)
+     * ```
+     * return: Promise<boolean>
+     * ```
+     *
+     * Sets the system audio level of the primary microphone set
+     *
+     * ### Usage
+     *
+     * ```javascript
+     * App.setPrimaryMicSystemLevel(volume).then(function(val) {
+     *   var isSet = val;
+     * });
+     * ```
+     */
+    App.prototype.setPrimaryMicSystemLevel = function (volume) {
+        return new Promise(function (resolve, reject) {
+            if (volume < 0) {
+                reject(Error('Volume can only be positive'));
+            }
+            app_1.App.getAsList('microphonedev2').then(function (arr) {
+                var audioDevices = arr.map(function (val) {
+                    return audio_1.AudioDevice.parse(val);
                 });
+                if (audioDevices.length && audioDevices.length > 0) {
+                    var micDevice = audioDevices[0];
+                    micDevice._setSystemLevel(volume);
+                    audioDevices[0] = micDevice;
+                    var dev = '';
+                    if (Array.isArray(audioDevices)) {
+                        for (var i = 0; i < audioDevices.length; ++i) {
+                            dev += audioDevices[i].toString();
+                        }
+                    }
+                    dev = '<devices>' + dev + '</devices>';
+                    app_1.App.set('microphonedev2', dev).then(function (setVal) {
+                        resolve(setVal);
+                    });
+                }
+                else {
+                    reject(Error('No audio device is set as primary microphone'));
+                }
+            });
+        });
+    };
+    /**
+     * param: hwenabled<number> (0 or 1, or set to 255 to avoid mute change)
+     * ```
+     * return: Promise<boolean>
+     * ```
+     *
+     * Sets whether the primary microphone set is enabled or disabled in the system
+     *
+     * ### Usage
+     *
+     * ```javascript
+     * App.setPrimaryMicSystemEnabled(enabled).then(function(val) {
+     *   var isSet = val;
+     * });
+     * ```
+     */
+    App.prototype.setPrimaryMicSystemEnabled = function (hwenabled) {
+        return new Promise(function (resolve, reject) {
+            if (hwenabled !== 0 && hwenabled !== 1 && hwenabled !== 255) {
+                reject(Error('Value can only be 0, 1 or 255'));
+            }
+            app_1.App.getAsList('microphonedev2').then(function (arr) {
+                var audioDevices = arr.map(function (val) {
+                    return audio_1.AudioDevice.parse(val);
+                });
+                if (audioDevices.length && audioDevices.length > 0) {
+                    var micDevice = audioDevices[0];
+                    micDevice._setSystemEnabled(hwenabled);
+                    audioDevices[0] = micDevice;
+                    var dev = '';
+                    if (Array.isArray(audioDevices)) {
+                        for (var i = 0; i < audioDevices.length; ++i) {
+                            dev += audioDevices[i].toString();
+                        }
+                    }
+                    dev = '<devices>' + dev + '</devices>';
+                    app_1.App.set('microphonedev2', dev).then(function (setVal) {
+                        resolve(setVal);
+                    });
+                }
+                else {
+                    reject(Error('No audio device is set as primary microphone'));
+                }
+            });
+        });
+    };
+    /**
+     * param: delay<number> (100 nanoseconds in units)
+     * ```
+     * return: Promise<boolean>
+     * ```
+     *
+     * Sets the loopback capture delay of the primary microphone set
+     *
+     * ### Usage
+     *
+     * ```javascript
+     * App.setPrimaryMicDelay(delay).then(function(val) {
+     *   var isSet = val;
+     * });
+     * ```
+     */
+    App.prototype.setPrimaryMicDelay = function (delay) {
+        return new Promise(function (resolve, reject) {
+            if (delay < 0) {
+                reject(Error('Delay can only be positive'));
+            }
+            app_1.App.getAsList('microphonedev2').then(function (arr) {
+                var audioDevices = arr.map(function (val) {
+                    return audio_1.AudioDevice.parse(val);
+                });
+                if (audioDevices.length && audioDevices.length > 0) {
+                    var micDevice = audioDevices[0];
+                    micDevice._setDelay(delay);
+                    audioDevices[0] = micDevice;
+                    var dev = '';
+                    if (Array.isArray(audioDevices)) {
+                        for (var i = 0; i < audioDevices.length; ++i) {
+                            dev += audioDevices[i].toString();
+                        }
+                    }
+                    dev = '<devices>' + dev + '</devices>';
+                    app_1.App.set('microphonedev2', dev).then(function (setVal) {
+                        resolve(setVal);
+                    });
+                }
+                else {
+                    reject(Error('No audio device is set as primary microphone'));
+                }
+            });
+        });
+    };
+    /**
+     * param: volume<number> (0 to 100 normal range, > 100 will boost volume level)
+     * ```
+     * return: Promise<boolean>
+     * ```
+     *
+     * Sets the application audio level of the primary speaker/audio render device
+     *
+     * ### Usage
+     *
+     * ```javascript
+     * App.setPrimarySpeakerLevel(volume).then(function(val) {
+     *   var isSet = val;
+     * });
+     * ```
+     */
+    App.prototype.setPrimarySpeakerLevel = function (volume) {
+        return new Promise(function (resolve, reject) {
+            if (volume < 0) {
+                reject(Error('Volume can only be positive'));
+            }
+            app_1.App.getAsList('microphonedev2').then(function (arr) {
+                var audioDevices = arr.map(function (val) {
+                    return audio_1.AudioDevice.parse(val);
+                });
+                if (audioDevices.length && audioDevices.length > 1) {
+                    var speakerDevice = audioDevices[1];
+                    speakerDevice._setLevel(volume);
+                    audioDevices[1] = speakerDevice;
+                    var dev = '';
+                    if (Array.isArray(audioDevices)) {
+                        for (var i = 0; i < audioDevices.length; ++i) {
+                            dev += audioDevices[i].toString();
+                        }
+                    }
+                    dev = '<devices>' + dev + '</devices>';
+                    app_1.App.set('microphonedev2', dev).then(function (setVal) {
+                        resolve(setVal);
+                    });
+                }
+                else {
+                    reject(Error('No audio device is set as primary speaker/audio render device'));
+                }
+            });
+        });
+    };
+    /**
+     * param: enabled<boolean>
+     * ```
+     * return: Promise<boolean>
+     * ```
+     *
+     * Sets whether the primary speaker/audio render device set is enabled or disabled in the applicaation
+     *
+     * ### Usage
+     *
+     * ```javascript
+     * App.setPrimarySpeakerEnabled(enabled).then(function(val) {
+     *   var isSet = val;
+     * });
+     * ```
+     */
+    App.prototype.setPrimarySpeakerEnabled = function (enabled) {
+        return new Promise(function (resolve, reject) {
+            app_1.App.getAsList('microphonedev2').then(function (arr) {
+                var audioDevices = arr.map(function (val) {
+                    return audio_1.AudioDevice.parse(val);
+                });
+                if (audioDevices.length && audioDevices.length > 1) {
+                    var speakerDevice = audioDevices[1];
+                    speakerDevice._setEnabled(enabled);
+                    audioDevices[1] = speakerDevice;
+                    var dev = '';
+                    if (Array.isArray(audioDevices)) {
+                        for (var i = 0; i < audioDevices.length; ++i) {
+                            dev += audioDevices[i].toString();
+                        }
+                    }
+                    dev = '<devices>' + dev + '</devices>';
+                    app_1.App.set('microphonedev2', dev).then(function (setVal) {
+                        resolve(setVal);
+                    });
+                }
+                else {
+                    reject(Error('No audio device is set as primary speaker/audio render device'));
+                }
+            });
+        });
+    };
+    /**
+     * param: volume<number> (0 to 100)
+     * ```
+     * return: Promise<boolean>
+     * ```
+     *
+     * Sets the system audio level of the primary speaker/audio render device set
+     *
+     * ### Usage
+     *
+     * ```javascript
+     * App.setPrimarySpeakerSystemLevel(volume).then(function(val) {
+     *   var isSet = val;
+     * });
+     * ```
+     */
+    App.prototype.setPrimarySpeakerSystemLevel = function (volume) {
+        return new Promise(function (resolve, reject) {
+            if (volume < 0) {
+                reject(Error('Volume can only be positive'));
+            }
+            app_1.App.getAsList('microphonedev2').then(function (arr) {
+                var audioDevices = arr.map(function (val) {
+                    return audio_1.AudioDevice.parse(val);
+                });
+                if (audioDevices.length && audioDevices.length > 1) {
+                    var speakerDevice = audioDevices[1];
+                    speakerDevice._setSystemLevel(volume);
+                    audioDevices[1] = speakerDevice;
+                    var dev = '';
+                    if (Array.isArray(audioDevices)) {
+                        for (var i = 0; i < audioDevices.length; ++i) {
+                            dev += audioDevices[i].toString();
+                        }
+                    }
+                    dev = '<devices>' + dev + '</devices>';
+                    app_1.App.set('microphonedev2', dev).then(function (setVal) {
+                        resolve(setVal);
+                    });
+                }
+                else {
+                    reject(Error('No audio device is set as primary speaker/audio render device'));
+                }
+            });
+        });
+    };
+    /**
+     * param: hwenabled<number> (0 or 1, or set to 255 to avoid mute change)
+     * ```
+     * return: Promise<boolean>
+     * ```
+     *
+     * Sets whether the primary speaker/audio render device set is enabled or disabled in the system
+     *
+     * ### Usage
+     *
+     * ```javascript
+     * App.setPrimarySpeakerSystemEnabled(enabled).then(function(val) {
+     *   var isSet = val;
+     * });
+     * ```
+     */
+    App.prototype.setPrimarySpeakerSystemEnabled = function (hwenabled) {
+        return new Promise(function (resolve, reject) {
+            if (hwenabled !== 0 && hwenabled !== 1 && hwenabled !== 255) {
+                reject(Error('Value can only 0, 1 or 255'));
+            }
+            app_1.App.getAsList('microphonedev2').then(function (arr) {
+                var audioDevices = arr.map(function (val) {
+                    return audio_1.AudioDevice.parse(val);
+                });
+                if (audioDevices.length && audioDevices.length > 1) {
+                    var speakerDevice = audioDevices[1];
+                    speakerDevice._setSystemEnabled(hwenabled);
+                    audioDevices[1] = speakerDevice;
+                    var dev = '';
+                    if (Array.isArray(audioDevices)) {
+                        for (var i = 0; i < audioDevices.length; ++i) {
+                            dev += audioDevices[i].toString();
+                        }
+                    }
+                    dev = '<devices>' + dev + '</devices>';
+                    app_1.App.set('microphonedev2', dev).then(function (setVal) {
+                        resolve(setVal);
+                    });
+                }
+                else {
+                    reject(Error('No audio device is set as primary speaker/audio render device'));
+                }
+            });
+        });
+    };
+    /**
+     * param: delay<number> (100 nanoseconds in units)
+     * ```
+     * return: Promise<boolean>
+     * ```
+     *
+     * Sets the loopback capture delay of the primary speaker/audio render device
+     *
+     * ### Usage
+     *
+     * ```javascript
+     * App.setPrimarySpeakerDelay(delay).then(function(val) {
+     *   var isSet = val;
+     * });
+     * ```
+     */
+    App.prototype.setPrimarySpeakerDelay = function (delay) {
+        return new Promise(function (resolve, reject) {
+            if (delay < 0) {
+                reject(Error('Delay can only be positive'));
+            }
+            app_1.App.getAsList('microphonedev2').then(function (arr) {
+                var audioDevices = arr.map(function (val) {
+                    return audio_1.AudioDevice.parse(val);
+                });
+                if (audioDevices.length && audioDevices.length > 1) {
+                    var speakerDevice = audioDevices[1];
+                    speakerDevice._setDelay(delay);
+                    audioDevices[1] = speakerDevice;
+                    var dev = '';
+                    if (Array.isArray(audioDevices)) {
+                        for (var i = 0; i < audioDevices.length; ++i) {
+                            dev += audioDevices[i].toString();
+                        }
+                    }
+                    dev = '<devices>' + dev + '</devices>';
+                    app_1.App.set('microphonedev2', dev).then(function (setVal) {
+                        resolve(setVal);
+                    });
+                }
+                else {
+                    reject(Error('No audio device is set as primary speaker/audio render device'));
+                }
             });
         });
     };
@@ -291,7 +690,7 @@ var App = (function () {
         });
     };
     /**
-     * param: (enabled: boolean)
+     * param: enabled<boolean>
      * ```
      * return: Promise<boolean>
      * ```
@@ -342,7 +741,7 @@ var App = (function () {
         });
     };
     /**
-     * param: (sdPeriod: number)
+     * param: sdPeriod<number>
      * ```
      * return: Promise<boolean>
      * ```
@@ -402,7 +801,7 @@ var App = (function () {
         });
     };
     /**
-     * param: (sdThreshold: number)
+     * param: sdThreshold<number>
      * ```
      * return: Promise<boolean>
      * ```
@@ -467,7 +866,7 @@ var App = (function () {
         });
     };
     /**
-     * param: (transition: Transition)
+     * param: transition<Transition>
      * ```
      * return: Promise<boolean>
      * ```
@@ -516,7 +915,7 @@ var App = (function () {
         });
     };
     /**
-     * param: (time: number)
+     * param: time<number>
      * ```
      * return: Promise<boolean>
      * ```
@@ -538,10 +937,47 @@ var App = (function () {
             });
         });
     };
+    /**
+     * return: Promise<boolean>
+     *
+     *  Clears all cookies across all browser instances. Not available to
+     *  source plugins (call this from the source properties window instead.)
+     *
+     * #### Usage
+     *
+     * ```javascript
+     * App.clearBrowserCookies().then(function(val) {
+     *  var isCleared = val;
+     * });
+     * ```
+     */
+    App.prototype.clearBrowserCookies = function () {
+        return new Promise(function (resolve, reject) {
+            if (environment_1.Environment.isSourcePlugin()) {
+                reject(new Error('This method is not available to source plugins.'));
+            }
+            else {
+                internal_1.exec('CallHost', 'deletecookie:videoitemprop');
+                resolve(true);
+            }
+        });
+    };
+    /**
+     * return: Promise<string>
+     *
+     * Returns a hashed string that may be used to differentiate among logged-in
+     * users. This will be useful in such cases as persisting data to be used by
+     * certain XSplit users only.
+     */
+    App.prototype.getUserIdHash = function () {
+        return new Promise(function (resolve) {
+            resolve(app_1.App.getGlobalProperty('userid'));
+        });
+    };
     return App;
 })();
 exports.App = App;
-},{"../internal/app":17,"../internal/util/json":22,"../internal/util/xml":24,"../system/audio":25,"../util/rectangle":34,"./transition":16}],2:[function(require,module,exports){
+},{"../internal/app":25,"../internal/internal":28,"../internal/util/json":30,"../internal/util/xml":32,"../system/audio":33,"../util/rectangle":45,"./environment":4,"./transition":24}],2:[function(require,module,exports){
 var app_1 = require('../internal/app');
 var Channel = (function () {
     /** Channel constructor (only used internally) */
@@ -628,7 +1064,171 @@ var Channel = (function () {
     return Channel;
 })();
 exports.Channel = Channel;
-},{"../internal/app":17}],3:[function(require,module,exports){
+},{"../internal/app":25}],3:[function(require,module,exports){
+/// <reference path="../../defs/es6-promise.d.ts" />
+var __extends = (this && this.__extends) || function (d, b) {
+    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+    function __() { this.constructor = d; }
+    __.prototype = b.prototype;
+    d.prototype = new __();
+};
+var internal_1 = require('../internal/internal');
+var eventemitter_1 = require('../util/eventemitter');
+/**
+ *  The Dll class allows access to functions in DLL files that are placed within
+ *  the Scriptdlls folder.
+ *
+ *  The class also emits two events for developers to know when the user
+ *  changes the DLL permission setting for the plugin through the permissions
+ *  window.
+ *
+ *  The following events are emitted.
+ *    - `access-granted`
+ *    - `access-revoked`
+ *
+ *  Use the `on(event: string, handler: Function)` function to listen to events.
+ *
+ */
+var Dll = (function (_super) {
+    __extends(Dll, _super);
+    function Dll() {
+        _super.apply(this, arguments);
+    }
+    /**
+     *  param: (path: string)
+     *
+     *  Loads one or more DLLs for the plugin to use. Currently, only Xjs.dll is
+     *  auto-loaded and does not require loading. Loading DLLs will trigger a
+     *  notification for the user, requesting access to be granted to DLL files.
+     *  Your plugin should only call this once, at the beginning of execution.
+     *
+     *  Paths are relative to the main XBC application folder, so sample usage is:
+     *
+     *  ```javascript
+     *  Dll.load(['Scriptdlls\\SplitMediaLabs\\XjsEx.dll']);
+     *  ```
+     */
+    Dll.load = function (path) {
+        internal_1.exec('LoadDll', path.join(','));
+    };
+    /**
+     *  param: (event: string, ...params: any[])
+     *
+     *  Allows this class to emit an event.
+     */
+    Dll.emit = function (event) {
+        var params = [];
+        for (var _i = 1; _i < arguments.length; _i++) {
+            params[_i - 1] = arguments[_i];
+        }
+        params.unshift(event);
+        Dll._emitter.emit.apply(Dll._emitter, params);
+    };
+    /**
+     *  param: (event: string, handler: Function)
+     *
+     *  Allows listening to events that this class emits. Currently there are two:
+     *  `access-granted` and `access-revoked`.
+     */
+    Dll.on = function (event, handler) {
+        Dll._emitter.on(event, handler);
+    };
+    /**
+     *  param: (funcName: string, ...params: string[])
+     *
+     *  return: string (see DLL documentation)
+     *
+     *  Calls a function from a loaded "safe" DLL. The only safe DLL we are
+     *  currently exposing is `Xjs.dll`.
+     */
+    Dll.call = function (func) {
+        var _this = this;
+        var params = [];
+        for (var _i = 1; _i < arguments.length; _i++) {
+            params[_i - 1] = arguments[_i];
+        }
+        return new Promise(function (resolve, reject) {
+            var funcCall = 'CallDll';
+            params.unshift(func);
+            params.unshift(funcCall);
+            var retValue = internal_1.exec.apply(_this, params);
+            if (retValue !== undefined) {
+                resolve(retValue);
+            }
+            else {
+                reject('DLL call not accessible.');
+            }
+        });
+    };
+    /**
+     *  param: (funcName: string, ...params: string[])
+     *
+     *  return: string (see DLL documentation)
+     *
+     *  Calls a function from a loaded "unsafe" DLL. The first DLL containing
+     *  the function name will be called, so you need to ensure there are no
+     *  function name collisions among DLLs for functions you require.
+     *
+     *  Some DLLs have callbacks. Assign a handler function to that callback in
+     *  the global namespace, and the DLL will call that function accordingly.
+     *
+     *  See the documentation of your specific DLL for more details.
+     */
+    Dll.callEx = function (func) {
+        var _this = this;
+        var params = [];
+        for (var _i = 1; _i < arguments.length; _i++) {
+            params[_i - 1] = arguments[_i];
+        }
+        return new Promise(function (resolve, reject) {
+            var funcCall = 'CallDllEx';
+            params.unshift(func);
+            params.unshift(funcCall);
+            var retValue = internal_1.exec.apply(_this, params);
+            if (retValue !== undefined) {
+                resolve(retValue);
+            }
+            else {
+                reject('DLL call not accessible.');
+            }
+        });
+    };
+    /**
+     *  return: Promise<boolean>
+     *
+     *  Determines if user has granted DLL access for this plugin, or whether
+     *  DLL security is disabled altogether.
+     */
+    Dll.isAccessGranted = function () {
+        return new Promise(function (resolve) {
+            resolve(internal_1.exec('CheckDllGrant') === '1');
+        });
+    };
+    Dll._emitter = new Dll();
+    return Dll;
+})(eventemitter_1.EventEmitter);
+exports.Dll = Dll;
+window.UpdateLocalProperty = function (prop, value) {
+    if (prop === 'prop:dlldogrant') {
+        var granted = value === '1';
+        if (granted) {
+            Dll.emit('access-granted');
+        }
+        else {
+            Dll.emit('access-revoked');
+        }
+    }
+};
+window.Setdlldogrant = function (value) {
+    var granted = value === '1';
+    if (granted) {
+        Dll.emit('access-granted');
+    }
+    else {
+        Dll.emit('access-revoked');
+    }
+};
+},{"../internal/internal":28,"../util/eventemitter":42}],4:[function(require,module,exports){
 /**
  * This class allows detection of the context in which the HTML is located.
  */
@@ -664,7 +1264,7 @@ var Environment = (function () {
     };
     /**
      * return: boolean
-     * Determines if this HTML is running within the source configuration window.
+     * Determines if this HTML is running within the source properties window.
      */
     Environment.isSourceConfig = function () {
         return Environment._isSourceConfig;
@@ -681,2423 +1281,81 @@ var Environment = (function () {
 })();
 exports.Environment = Environment;
 Environment.initialize();
-},{}],4:[function(require,module,exports){
-/// <reference path="../../../defs/es6-promise.d.ts" />
-var __extends = (this && this.__extends) || function (d, b) {
-    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
-    function __() { this.constructor = d; }
-    __.prototype = b.prototype;
-    d.prototype = new __();
-};
-var mixin_1 = require('../../internal/util/mixin');
-var item_1 = require('../../internal/item');
-var iaudio_1 = require('./iaudio');
-var item_2 = require('./item');
-var environment_1 = require('../environment');
-/**
- * The AudioItem class represents an audio device that has been added
- * to the stage.
- *
- * Inherits from: {@link #core/Item Core/Item}
- *
- *  All methods marked as *Chainable* resolve with the original `AudioItem`
- *  instance.
- */
-var AudioItem = (function (_super) {
-    __extends(AudioItem, _super);
-    function AudioItem() {
-        _super.apply(this, arguments);
-    }
-    AudioItem.prototype.isSilenceDetectionEnabled = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:AudioGainEnable', slot).then(function (val) {
-                resolve(val === '1');
-            });
-        });
-    };
-    AudioItem.prototype.setSilenceDetectionEnabled = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (environment_1.Environment.isSourcePlugin()) {
-                reject(Error('Source plugins cannot update audio sources properties'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:AudioGainEnable', (value ? '1' : '0'), slot)
-                    .then(function (res) {
-                    if (!res) {
-                        reject(Error('Item set property failed'));
-                    }
-                    else {
-                        resolve(_this);
-                    }
-                });
-            }
-        });
-    };
-    AudioItem.prototype.getSilenceThreshold = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:AudioGain', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    AudioItem.prototype.setSilenceThreshold = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (environment_1.Environment.isSourcePlugin()) {
-                reject(Error('Source plugins cannot update audio sources properties'));
-            }
-            else if (typeof value !== 'number') {
-                reject(Error('Only numbers are acceptable values for threshold'));
-            }
-            else if (value % 1 !== 0 || value < 0 || value > 128) {
-                reject(Error('Only integers in the range 0-128 are acceptable for threshold'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:AudioGain', String(value), slot).then(function (res) {
-                    if (!res) {
-                        reject(Error('Item set property failed'));
-                    }
-                    else {
-                        resolve(_this);
-                    }
-                });
-            }
-        });
-    };
-    AudioItem.prototype.getSilencePeriod = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:AudioGainLatency', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    AudioItem.prototype.setSilencePeriod = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (environment_1.Environment.isSourcePlugin()) {
-                reject(Error('Source plugins cannot update audio sources properties'));
-            }
-            else if (typeof value !== 'number') {
-                reject(Error('Only numbers are acceptable values for period'));
-            }
-            else if (value % 1 !== 0 || value < 0 || value > 10000) {
-                reject(Error('Only integers in the range 0-10000 are acceptable for period'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:AudioGainLatency', String(value), slot).then(function (res) {
-                    if (!res) {
-                        reject(Error('Item set property failed'));
-                    }
-                    else {
-                        resolve(_this);
-                    }
-                });
-            }
-        });
-    };
-    return AudioItem;
-})(item_2.Item);
-exports.AudioItem = AudioItem;
-mixin_1.applyMixins(item_2.Item, [iaudio_1.ItemAudio]);
-},{"../../internal/item":21,"../../internal/util/mixin":23,"../environment":3,"./iaudio":8,"./item":13}],5:[function(require,module,exports){
-/// <reference path="../../../defs/es6-promise.d.ts" />
-var __extends = (this && this.__extends) || function (d, b) {
-    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
-    function __() { this.constructor = d; }
-    __.prototype = b.prototype;
-    d.prototype = new __();
-};
-var mixin_1 = require('../../internal/util/mixin');
-var item_1 = require('../../internal/item');
-var ilayout_1 = require('./ilayout');
-var icolor_1 = require('./icolor');
-var ichroma_1 = require('./ichroma');
-var itransition_1 = require('./itransition');
-var item_2 = require('./item');
-/**
- * The CameraItem Class provides methods specifically used for camera items and
- * also methods that are shared between Item Classes. The
- * {@link #core/Scene Scene} class' getItems method would automatically return a
- * CameraItem object if there's a camera item on the specified scene.
- *
- * Inherits from: {@link #core/Item Core/Item}
- *
- * ### Basic Usage
- *
- * ```javascript
- * var XJS = require('xjs');
- *
- * XJS.Scene.getActiveScene().then(function(scene) {
- *   scene.getItems().then(function(items) {
- *     for (var i in items) {
- *       if (items[i] instanceof XJS.CameraItem) {
- *         // Manipulate your camera item here
- *         items[i].getDeviceId().then(function(id) {
- *           // Do something with the id
- *         });
- *       }
- *     }
- *   });
- * });
- * ```
- *
- *  All methods marked as *Chainable* resolve with the original `CameraItem`
- *  instance.
- */
-var CameraItem = (function (_super) {
-    __extends(CameraItem, _super);
-    function CameraItem() {
-        _super.apply(this, arguments);
+},{}],5:[function(require,module,exports){
+/// <reference path="../../defs/es6-promise.d.ts" />
+var environment_1 = require('../core/environment');
+var internal_1 = require('../internal/internal');
+var Extension = (function () {
+    function Extension() {
+        if (environment_1.Environment.isExtension()) {
+            this._presName = window.location.href;
+        }
+        else {
+            throw new Error('Extension class can only be used on Extension Plugins');
+        }
     }
     /**
-     * return: Promise<string>
-     *
-     * Gets the device ID of the underlying camera device.
+     *  Gets the instance of the Extension class. Use this instead of the constructor.
      */
-    CameraItem.prototype.getDeviceId = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:item', slot).then(function (val) {
-                resolve(val);
-            });
-        });
+    Extension.getInstance = function () {
+        if (Extension._instance === undefined) {
+            Extension._instance = new Extension();
+        }
+        return Extension._instance;
     };
-    // special color options pinning
     /**
-     * param: value<boolean>
+     * param: (configObj: JSON)
+     * ```
+     * return: Promise<ExtensionWindow|Error>
+     * ```
      *
-     * Set this to true to share color settings across all instances of this
-     * camera device on the stage.
-     *
-     * *Chainable.*
+     * Save the configuration object to the presentation
      */
-    CameraItem.prototype.setColorOptionsPinned = function (value) {
+    Extension.prototype.saveConfig = function (configObj) {
         var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.set('prop:cc_pin', value ? '1' : '0', slot).then(function () {
+        return new Promise(function (resolve, reject) {
+            if ({}.toString.call(configObj) === '[object Object]') {
+                internal_1.exec('SetPresProperty', _this._presName, JSON.stringify(configObj));
                 resolve(_this);
-            });
-        });
-    };
-    /**
-     * return: Promise<boolean>
-     *
-     * Checks whether color settings are shared across all instances of
-     * this camera device on the stage.
-     */
-    CameraItem.prototype.getColorOptionsPinned = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:cc_pin', slot).then(function (val) {
-                resolve(val === '1' ? true : false);
-            });
-        });
-    };
-    // special chroma options pinning
-    /**
-     * param: (value: boolean)
-     *
-     * Set this to true to share chroma keying settings across all instances of
-     * this camera device on the stage.
-     *
-     * *Chainable.*
-     */
-    CameraItem.prototype.setKeyingOptionsPinned = function (value) {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.set('prop:key_pin', value ? '1' : '0', slot).then(function () {
-                resolve(_this);
-            });
-        });
-    };
-    /**
-     * return: Promise<boolean>
-     *
-     * Checks whether chroma keying settings are shared across all instances of
-     * this camera device on the stage.
-     */
-    CameraItem.prototype.getKeyingOptionsPinned = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:key_pin', slot).then(function (val) {
-                resolve(val === '1' ? true : false);
-            });
-        });
-    };
-    return CameraItem;
-})(item_2.Item);
-exports.CameraItem = CameraItem;
-mixin_1.applyMixins(CameraItem, [ilayout_1.ItemLayout, icolor_1.ItemColor, ichroma_1.ItemChroma, itransition_1.ItemTransition]);
-},{"../../internal/item":21,"../../internal/util/mixin":23,"./ichroma":9,"./icolor":10,"./ilayout":12,"./item":13,"./itransition":14}],6:[function(require,module,exports){
-/// <reference path="../../../defs/es6-promise.d.ts" />
-var __extends = (this && this.__extends) || function (d, b) {
-    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
-    function __() { this.constructor = d; }
-    __.prototype = b.prototype;
-    d.prototype = new __();
-};
-var mixin_1 = require('../../internal/util/mixin');
-var item_1 = require('../../internal/item');
-var ilayout_1 = require('./ilayout');
-var icolor_1 = require('./icolor');
-var ichroma_1 = require('./ichroma');
-var itransition_1 = require('./itransition');
-var item_2 = require('./item');
-var json_1 = require('../../internal/util/json');
-var xml_1 = require('../../internal/util/xml');
-var item_3 = require('./item');
-var environment_1 = require('../environment');
-/**
- * The GameItem Class provides methods specifically used for game items and
- * also methods that is shared between Item Classes. The
- * {@link #core/Scene Scene} class' getItems method would automatically return a
- * GameItem object if there's a game item on the specified scene.
- *
- * Inherits from: {@link #core/Item Core/Item}
- *
- * ### Basic Usage
- *
- * ```javascript
- * var XJS = require('xjs');
- *
- * XJS.Scene.getActiveScene().then(function(scene) {
- *   scene.getItems().then(function(items) {
- *     for (var i in items) {
- *       if (items[i] instanceof XJS.GameItem) {
- *         // Manipulate your game item here
- *         items[i].setOfflineImage(path); // just an example here
- *       }
- *     }
- *   });
- * });
- * ```
- *
- *  All methods marked as *Chainable* resolve with the original `GameItem`
- *  instance.
- */
-var GameItem = (function (_super) {
-    __extends(GameItem, _super);
-    function GameItem() {
-        _super.apply(this, arguments);
-    }
-    /**
-     * return: Promise<boolean>
-     *
-     * Check if Game Special Optimization is currently enabled or not
-     */
-    GameItem.prototype.isSpecialOptimizationEnabled = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('GameCapSurfSharing').then(function (res) {
-                resolve(res === '1');
-            });
-        });
-    };
-    /**
-     * param: Promise<boolean>
-     *
-     * Set Game Special Optimization to on or off
-     *
-     * *Chainable.*
-     */
-    GameItem.prototype.setSpecialOptimizationEnabled = function (value) {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.set('GameCapSurfSharing', (value ? '1' : '0'), slot).then(function () {
-                resolve(_this);
-            });
-        });
-    };
-    /**
-     * return: Promise<boolean>
-     *
-     * Check if Show Mouse is currently enabled or not
-     */
-    GameItem.prototype.isShowMouseEnabled = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('GameCapShowMouse').then(function (res) {
-                resolve(res === '1');
-            });
-        });
-    };
-    /**
-     * param: value<boolean>
-     *
-     * Set Show Mouse in game to on or off
-     *
-     * *Chainable.*
-     */
-    GameItem.prototype.setShowMouseEnabled = function (value) {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.set('GameCapShowMouse', (value ? '1' : '0'), slot).then(function () {
-                resolve(_this);
-            });
-        });
-    };
-    /**
-     * param: path<string>
-     *
-     * Set the offline image of a game source
-     *
-     * *Chainable.*
-     */
-    GameItem.prototype.setOfflineImage = function (path) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (_this._type !== item_3.ItemTypes.GAMESOURCE) {
-                reject(Error('Current item should be a game source'));
-            }
-            else if (environment_1.Environment.isSourcePlugin()) {
-                reject(Error('Source plugins cannot update offline images of other sources'));
-            }
-            else if (!(_this._value instanceof xml_1.XML)) {
-                _this.getValue().then(function () {
-                    _this.setOfflineImage(path).then(function (itemObj) {
-                        resolve(itemObj);
-                    });
-                });
             }
             else {
-                var regExp = new RegExp('^(([A-Z|a-z]:\\\\[^*|"<>?\n]*)|(\\\\\\\\.*?' +
-                    '\\\\.*)|([A-Za-z]+\\\\[^*|"<>?\\n]*))\.(png|gif|jpg|jpeg|tif)$');
-                if (regExp.test(path) || path === '') {
-                    var valueObj = json_1.JSON.parse(_this._value.toString());
-                    valueObj['replace'] = path;
-                    _this.setValue(xml_1.XML.parseJSON(valueObj)).then(function () {
-                        resolve(_this);
-                    });
-                }
+                reject(Error('Configuration object should be in JSON format'));
             }
         });
     };
     /**
-     * return: Promise<string>
+     * return: Promise<JSON>
      *
-     * Get the offline image of a game source
+     * Get the saved configuration from the presentation
      */
-    GameItem.prototype.getOfflineImage = function () {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (_this._type !== item_3.ItemTypes.GAMESOURCE) {
-                reject(Error('Current item should be a game source'));
-            }
-            else {
-                _this.getValue().then(function () {
-                    var valueObj = json_1.JSON.parse(_this._value.toString());
-                    resolve(valueObj['replace'] ? valueObj['replace'] : '');
-                });
-            }
-        });
-    };
-    return GameItem;
-})(item_2.Item);
-exports.GameItem = GameItem;
-mixin_1.applyMixins(GameItem, [ilayout_1.ItemLayout, icolor_1.ItemColor, ichroma_1.ItemChroma, itransition_1.ItemTransition]);
-},{"../../internal/item":21,"../../internal/util/json":22,"../../internal/util/mixin":23,"../../internal/util/xml":24,"../environment":3,"./ichroma":9,"./icolor":10,"./ilayout":12,"./item":13,"./itransition":14}],7:[function(require,module,exports){
-/// <reference path="../../../defs/es6-promise.d.ts" />
-var __extends = (this && this.__extends) || function (d, b) {
-    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
-    function __() { this.constructor = d; }
-    __.prototype = b.prototype;
-    d.prototype = new __();
-};
-var internal_1 = require('../../internal/internal');
-var mixin_1 = require('../../internal/util/mixin');
-var item_1 = require('../../internal/item');
-var ilayout_1 = require('./ilayout');
-var icolor_1 = require('./icolor');
-var ichroma_1 = require('./ichroma');
-var itransition_1 = require('./itransition');
-var iconfig_1 = require('./iconfig');
-var item_2 = require('./item');
-var rectangle_1 = require('../../util/rectangle');
-var environment_1 = require('../environment');
-/**
- * The HTMLItem class represents a web page source. This covers both source
- * plugins and non-plugin URLs.
- *
- * Inherits from: {@link #core/Item Core/Item}
- *
- *  All methods marked as *Chainable* resolve with the original `HTMLItem`
- *  instance.
- */
-var HTMLItem = (function (_super) {
-    __extends(HTMLItem, _super);
-    function HTMLItem() {
-        _super.apply(this, arguments);
-    }
-    /**
-     * return: Promise<string>
-     *
-     * Gets the URL of this webpage source.
-     */
-    HTMLItem.prototype.getURL = function () {
+    Extension.prototype.loadConfig = function () {
         var _this = this;
         return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:item', slot).then(function (url) {
-                var _url = String(url).split('*');
-                url = _url[0];
-                resolve(url);
-            });
-        });
-    };
-    /**
-     * param: (url: string)
-     * ```
-     * return: Promise<HTMLItem>
-     * ```
-     *
-     * Sets the URL of this webpage source.
-     *
-     * *Chainable.*
-     */
-    HTMLItem.prototype.setURL = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.set('prop:item', value, slot).then(function (code) {
-                if (code) {
-                    resolve(_this);
-                }
-                else {
-                    reject('Invalid value');
-                }
-            });
-        });
-    };
-    /**
-     * return: Promise<string>
-     *
-     * Gets the javascript commands to be executed on source upon load
-     */
-    HTMLItem.prototype.getBrowserJS = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:custom', slot).then(function (custom) {
-                var customJS = '';
-                try {
-                    var customObject = JSON.parse(custom);
-                    if (customObject.hasOwnProperty('customJS')) {
-                        customJS = customObject['customJS'];
-                    }
-                }
-                catch (e) {
-                }
-                resolve(customJS);
-            });
-        });
-    };
-    /**
-     * param: (js: string, refresh: boolean = false)
-     * ```
-     * return: Promise<HTMLItem>
-     * ```
-     *
-     * Sets the javascript commands to be executed on source
-     * right upon setting and on load. Optionally set second parameter
-     * to true to refresh source (needed to clean previously executed JS code.)
-     *
-     * *Chainable.*
-     */
-    HTMLItem.prototype.setBrowserJS = function (value, refresh) {
-        var _this = this;
-        if (refresh === void 0) { refresh = false; }
-        return new Promise(function (resolve, reject) {
-            var slot = item_1.Item.attach(_this._id);
-            var customObject = {};
-            item_1.Item.get('prop:custom', slot).then(function (custom) {
-                var customJS = '';
-                var customCSS = '';
-                var scriptString = ' ';
-                var scriptEnabled = true;
-                var cssEnabled = true;
-                try {
-                    customObject = JSON.parse(custom);
-                    if (customObject.hasOwnProperty('cssEnabled')) {
-                        cssEnabled = (customObject['cssEnabled'] == 'true');
-                    }
-                    if (customObject.hasOwnProperty('scriptEnabled')) {
-                        scriptEnabled = (customObject['scriptEnabled'] == 'true');
-                    }
-                    if (customObject.hasOwnProperty('customCSS')) {
-                        customCSS = customObject['customCSS'];
-                    }
-                }
-                catch (e) {
-                }
-                customObject['cssEnabled'] = cssEnabled.toString();
-                customObject['scriptEnabled'] = scriptEnabled.toString();
-                customObject['customCSS'] = customCSS;
-                customObject['customJS'] = value;
-                if (cssEnabled === true) {
-                    var cssScript = "var xjsCSSOverwrite = document.createElement('style');xjsCSSOverwrite.id = 'splitmedialabsCSSOverwrite';xjsCSSOverwrite.type = 'text/css';var h = document.querySelector('head');var existing = document.querySelector('head #splitmedialabsCSSOverwrite');if (existing != null)h.removeChild(existing);xjsCSSOverwrite.innerHTML = '" + customCSS.replace(/(\r\n|\n|\r)/gm, '').replace(/\s{2,}/g, ' ').replace(/(\[br\])/gm, '') + "';h.appendChild(xjsCSSOverwrite);";
-                    scriptString = scriptString + cssScript;
-                }
-                if (value !== '' && scriptEnabled === true) {
-                    scriptString = scriptString + value;
-                }
-                return item_1.Item.set('prop:BrowserJs', scriptString, slot);
-            })
-                .then(function () {
-                return item_1.Item.set('prop:custom', JSON.stringify(customObject), slot);
-            })
-                .then(function () {
-                if (refresh) {
-                    item_1.Item.set('refresh', '', slot).then(function () {
-                        resolve(this);
-                    });
-                }
-                else {
-                    resolve(this);
-                }
-            });
-        });
-    };
-    /**
-     * return: Promise<boolean>
-     *
-     * Gets if BrowserJS is enabled and executed on load
-     */
-    HTMLItem.prototype.isBrowserJSEnabled = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:custom', slot).then(function (custom) {
-                var enabled = true;
-                try {
-                    var customObject = JSON.parse(custom);
-                    if (customObject.hasOwnProperty('scriptEnabled')) {
-                        enabled = (customObject['scriptEnabled'] == 'true');
-                    }
-                }
-                catch (e) {
-                }
-                resolve(enabled);
-            });
-        });
-    };
-    /**
-     * param: value<string>
-     * ```
-     * return: Promise<HTMLItem>
-     * ```
-     *
-     * Enables or disables execution of the set BrowserJs upon load.
-     * Note that disabling this will require source to be refreshed
-     * in order to remove any BrowserJS previously executed.
-     *
-     * *Chainable.*
-     */
-    HTMLItem.prototype.enableBrowserJS = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            var slot = item_1.Item.attach(_this._id);
-            var customObject = {};
-            item_1.Item.get('prop:custom', slot).then(function (custom) {
-                var customJS = '';
-                var customCSS = '';
-                var scriptString = ' ';
-                var scriptEnabled = true;
-                var cssEnabled = true;
-                try {
-                    customObject = JSON.parse(custom);
-                    if (customObject.hasOwnProperty('cssEnabled')) {
-                        cssEnabled = (customObject['cssEnabled'] == 'true');
-                    }
-                    if (customObject.hasOwnProperty('customJS')) {
-                        customJS = customObject['customJS'];
-                    }
-                    if (customObject.hasOwnProperty('customCSS')) {
-                        customCSS = customObject['customCSS'];
-                    }
-                }
-                catch (e) {
-                }
-                customObject['cssEnabled'] = cssEnabled.toString();
-                customObject['scriptEnabled'] = value.toString();
-                customObject['customJS'] = customJS;
-                customObject['customCSS'] = customCSS;
-                if (cssEnabled === true) {
-                    var cssScript = 'var xjsCSSOverwrite = document.createElement("style");' +
-                        'xjsCSSOverwrite.id = "splitmedialabsCSSOverwrite";' +
-                        'xjsCSSOverwrite.type = "text/css";' +
-                        'var h = document.querySelector("head");' +
-                        'var existing = document' +
-                        '.querySelector("head #splitmedialabsCSSOverwrite");' +
-                        'if (existing != null)h.removeChild(existing);' +
-                        'xjsCSSOverwrite.innerHTML = "' +
-                        customCSS.replace(/(\r\n|\n|\r)/gm, '')
-                            .replace(/\s{2,}/g, ' ').replace(/(\[br\])/gm, '') + '";"' +
-                        'h.appendChild(xjsCSSOverwrite);';
-                    scriptString = scriptString + cssScript;
-                }
-                if (customJS !== '' && value === true) {
-                    scriptString = scriptString + customJS;
-                }
-                return item_1.Item.set('prop:BrowserJs', scriptString, slot);
-            })
-                .then(function () {
-                return item_1.Item.set('prop:custom', JSON.stringify(customObject), slot);
-            })
-                .then(function () {
-                if (!value) {
-                    item_1.Item.set('refresh', '', slot).then(function () {
-                        resolve(this);
-                    });
-                }
-                else {
-                    resolve(this);
-                }
-            });
-        });
-    };
-    /**
-     * return: Promise<string>
-     *
-     * Gets the custom CSS applied to the document upon loading
-     */
-    HTMLItem.prototype.getCustomCSS = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:custom', slot).then(function (custom) {
-                var customCSS = '';
-                try {
-                    var customObject = JSON.parse(custom);
-                    if (customObject.hasOwnProperty('customCSS')) {
-                        customCSS = customObject['customCSS'];
-                    }
-                }
-                catch (e) {
-                }
-                resolve(customCSS);
-            });
-        });
-    };
-    /**
-     * param: value<string>
-     * ```
-     * return: Promise<HTMLItem>
-     * ```
-     *
-     * Sets the custom CSS to be applied to the document upon loading
-     *
-     * *Chainable.*
-     */
-    HTMLItem.prototype.setCustomCSS = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            var slot = item_1.Item.attach(_this._id);
-            var customObject = {};
-            item_1.Item.get('prop:custom', slot).then(function (custom) {
-                var customJS = '';
-                var customCSS = '';
-                var scriptString = ' ';
-                var scriptEnabled = true;
-                var cssEnabled = true;
-                try {
-                    customObject = JSON.parse(custom);
-                    if (customObject.hasOwnProperty('cssEnabled')) {
-                        cssEnabled = (customObject['cssEnabled'] == 'true');
-                    }
-                    if (customObject.hasOwnProperty('scriptEnabled')) {
-                        scriptEnabled = (customObject['scriptEnabled'] == 'true');
-                    }
-                    if (customObject.hasOwnProperty('customJS')) {
-                        customJS = customObject['customJS'];
-                    }
-                }
-                catch (e) {
-                }
-                customObject['cssEnabled'] = cssEnabled.toString();
-                customObject['scriptEnabled'] = scriptEnabled.toString();
-                customObject['customJS'] = customJS;
-                customObject['customCSS'] = value;
-                if (cssEnabled === true) {
-                    var cssScript = 'var xjsCSSOverwrite = document.createElement("style");' +
-                        'xjsCSSOverwrite.id = "splitmedialabsCSSOverwrite";' +
-                        'xjsCSSOverwrite.type = "text/css";' +
-                        'var h = document.querySelector("head");' +
-                        'var existing = document' +
-                        '.querySelector("head #splitmedialabsCSSOverwrite");' +
-                        'if (existing != null)h.removeChild(existing);' +
-                        'xjsCSSOverwrite.innerHTML = "' +
-                        value.replace(/(\r\n|\n|\r)/gm, '')
-                            .replace(/\s{2,}/g, ' ').replace(/(\[br\])/gm, '') +
-                        '";h.appendChild(xjsCSSOverwrite);';
-                    scriptString = scriptString + cssScript;
-                }
-                if (customJS !== '' && scriptEnabled === true) {
-                    scriptString = scriptString + customJS;
-                }
-                return item_1.Item.set('prop:BrowserJs', scriptString, slot);
-            })
-                .then(function () {
-                return item_1.Item.set('prop:custom', JSON.stringify(customObject), slot);
-            })
-                .then(function () {
-                resolve(this);
-            });
-        });
-    };
-    /**
-     * return: Promise<string>
-     *
-     * Gets if custom CSS is enabled and applied to the document on load
-     */
-    HTMLItem.prototype.isCustomCSSEnabled = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:custom', slot).then(function (custom) {
-                var enabled = true;
-                try {
-                    var customObject = JSON.parse(custom);
-                    if (customObject.hasOwnProperty('cssEnabled')) {
-                        enabled = (customObject['cssEnabled'] == 'true');
-                    }
-                }
-                catch (e) {
-                }
-                resolve(enabled);
-            });
-        });
-    };
-    /**
-     * param: value<string>
-     * ```
-     * return: Promise<HTMLItem>
-     * ```
-     *
-     * Enables or disables application of custom CSS to the document
-     *
-     * *Chainable.*
-     */
-    HTMLItem.prototype.enableCustomCSS = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            var slot = item_1.Item.attach(_this._id);
-            var customObject = {};
-            item_1.Item.get('prop:custom', slot).then(function (custom) {
-                var customJS = '';
-                var customCSS = '';
-                var scriptString = ' ';
-                var scriptEnabled = true;
-                var cssEnabled = true;
-                try {
-                    customObject = JSON.parse(custom);
-                    if (customObject.hasOwnProperty('scriptEnabled')) {
-                        scriptEnabled = (customObject['scriptEnabled'] == 'true');
-                    }
-                    if (customObject.hasOwnProperty('customJS')) {
-                        customJS = customObject['customJS'];
-                    }
-                    if (customObject.hasOwnProperty('customCSS')) {
-                        customCSS = customObject['customCSS'];
-                    }
-                }
-                catch (e) {
-                }
-                customObject['scriptEnabled'] = scriptEnabled.toString();
-                customObject['cssEnabled'] = value.toString();
-                customObject['customJS'] = customJS;
-                customObject['customCSS'] = customCSS;
-                if (value === true) {
-                    var cssScript = 'var xjsCSSOverwrite = document.createElement("style");' +
-                        'xjsCSSOverwrite.id = "splitmedialabsCSSOverwrite";' +
-                        'xjsCSSOverwrite.type = "text/css";' +
-                        'var h = document.querySelector("head");' +
-                        'var existing = document' +
-                        '.querySelector("head #splitmedialabsCSSOverwrite");' +
-                        'if (existing != null)h.removeChild(existing);' +
-                        'xjsCSSOverwrite.innerHTML = "' +
-                        customCSS.replace(/(\r\n|\n|\r)/gm, '')
-                            .replace(/\s{2,}/g, ' ').replace(/(\[br\])/gm, '') +
-                        '";h.appendChild(xjsCSSOverwrite);';
-                    scriptString = scriptString + cssScript;
-                }
-                if (customJS !== '' && value === scriptEnabled) {
-                    scriptString = scriptString + customJS;
-                }
-                return item_1.Item.set('prop:BrowserJs', scriptString, slot);
-            })
-                .then(function () {
-                return item_1.Item.set('prop:custom', JSON.stringify(customObject), slot);
-            })
-                .then(function () {
-                if (!value) {
-                    var cssScript = "var h = document.querySelector('head');var existing3 = document.querySelector('head #splitmedialabsCSSOverwrite');if (existing3 != null)h.removeChild(existing3);";
-                    if (environment_1.Environment.isSourcePlugin()) {
-                        eval(cssScript);
-                    }
-                    else {
-                        internal_1.exec('CallInner', 'eval', cssScript);
-                    }
-                    resolve(this);
-                }
-                else {
-                    resolve(this);
-                }
-            });
-        });
-    };
-    /**
-     * return: Promise<boolean>
-     *
-     * Check if browser is rendered transparent
-     */
-    HTMLItem.prototype.isBrowserTransparent = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:BrowserTransparent').then(function (isTransparent) {
-                resolve(isTransparent === '1');
-            });
-        });
-    };
-    /**
-     * param: Promise<boolean>
-     * ```
-     * return: Promise<HTMLItem>
-     * ```
-     *
-     * Enable or disabled transparency of CEF browser
-     *
-     * *Chainable.*
-     */
-    HTMLItem.prototype.enableBrowserTransparency = function (value) {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.set('prop:BrowserTransparent', (value ? '1' : '0'), slot).then(function () {
-                resolve(_this);
-            });
-        });
-    };
-    /**
-     * return: Promise<Rectangle>
-     *
-     * Gets the custom browser window size for the source, if set,
-     * regardless of its layout on the mixer
-     *
-     * See also: {@link #util/Rectangle Util/Rectangle}
-     */
-    HTMLItem.prototype.getBrowserCustomSize = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            var customSize;
-            item_1.Item.get('prop:BrowserSize', slot).then(function (val) {
-                if (val !== '') {
-                    var _a = decodeURIComponent(val).split(','), width = _a[0], height = _a[1];
-                    customSize = rectangle_1.Rectangle.fromDimensions(Number(width), Number(height));
-                }
-                else {
-                    customSize = rectangle_1.Rectangle.fromDimensions(0, 0);
-                }
-                resolve(customSize);
-            });
-        });
-    };
-    /**
-     * param: Promise<Rectangle>
-     * ```
-     * return: Promise<HTMLItem>
-     * ```
-     *
-     * Sets the custom browser window size for the source
-     * regardless of its layout on the mixer
-     *
-     * *Chainable.*
-     *
-     * See also: {@link #util/Rectangle Util/Rectangle}
-     */
-    HTMLItem.prototype.setBrowserCustomSize = function (value) {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.set('prop:BrowserSize', value.toDimensionString(), slot).then(function () {
-                resolve(_this);
-            });
-        });
-    };
-    return HTMLItem;
-})(item_2.Item);
-exports.HTMLItem = HTMLItem;
-mixin_1.applyMixins(HTMLItem, [ilayout_1.ItemLayout, icolor_1.ItemColor, ichroma_1.ItemChroma, itransition_1.ItemTransition, iconfig_1.ItemConfigurable]);
-},{"../../internal/internal":20,"../../internal/item":21,"../../internal/util/mixin":23,"../../util/rectangle":34,"../environment":3,"./ichroma":9,"./icolor":10,"./iconfig":11,"./ilayout":12,"./item":13,"./itransition":14}],8:[function(require,module,exports){
-/// <reference path="../../../defs/es6-promise.d.ts" />
-var item_1 = require('../../internal/item');
-var environment_1 = require('../environment');
-var ItemAudio = (function () {
-    function ItemAudio() {
-    }
-    ItemAudio.prototype.getVolume = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:volume', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    ItemAudio.prototype.setVolume = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (environment_1.Environment.isSourcePlugin()) {
-                reject(Error('Source plugins cannot update audio source properties.'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                value = value < 0 ? 0 : value > 100 ? 100 : value;
-                item_1.Item.set('prop:volume', String(value), slot).then(function (res) {
-                    if (!res) {
-                        reject(Error('Item set property failed'));
-                    }
-                    else {
-                        resolve(_this);
-                    }
-                });
-            }
-        });
-    };
-    ItemAudio.prototype.isMute = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:mute', slot).then(function (val) {
-                resolve(val === '1');
-            });
-        });
-    };
-    ItemAudio.prototype.setMute = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (environment_1.Environment.isSourcePlugin()) {
-                reject(Error('Source plugins cannot update audio sources properties'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:mute', (value ? '1' : '0'), slot).then(function (res) {
-                    if (!res) {
-                        reject(Error('Item set property failed'));
-                    }
-                    else {
-                        resolve(_this);
-                    }
-                });
-            }
-        });
-    };
-    ItemAudio.prototype.getAudioOffset = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:AudioDelay', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    ItemAudio.prototype.setAudioOffset = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (environment_1.Environment.isSourcePlugin()) {
-                reject(Error('Source plugins cannot update audio sources properties'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:AudioDelay', String(value), slot).then(function (res) {
-                    if (!res) {
-                        reject(Error('Item set property failed'));
-                    }
-                    else {
-                        resolve(_this);
-                    }
-                });
-            }
-        });
-    };
-    ItemAudio.prototype.isStreamOnlyEnabled = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:sounddev', slot).then(function (val) {
-                resolve(val === '1');
-            });
-        });
-    };
-    ItemAudio.prototype.setStreamOnlyEnabled = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (environment_1.Environment.isSourcePlugin()) {
-                reject(Error('Source plugins cannot update audio sources properties'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:sounddev', (value ? '1' : '0'), slot).then(function (res) {
-                    if (!res) {
-                        reject(Error('Item set property failed'));
-                    }
-                    else {
-                        resolve(_this);
-                    }
-                });
-            }
-        });
-    };
-    return ItemAudio;
-})();
-exports.ItemAudio = ItemAudio;
-},{"../../internal/item":21,"../environment":3}],9:[function(require,module,exports){
-/// <reference path="../../../defs/es6-promise.d.ts" />
-var item_1 = require('../../internal/item');
-var color_1 = require('../../util/color');
-/**
- *  Used by items that implement the Chroma interface.
- *  Check `getKeyingType()`/`setKeyingType()` method of
- *  {@link #core/CameraItem Core/CameraItem},
- *  {@link #core/GameItem Core/GameItem}, and
- *  {@link #core/HTMLItem Core/HTMLItem}.
- */
-(function (KeyingType) {
-    KeyingType[KeyingType["LEGACY"] = 0] = "LEGACY";
-    KeyingType[KeyingType["COLORKEY"] = 1] = "COLORKEY";
-    KeyingType[KeyingType["RGBKEY"] = 2] = "RGBKEY"; // Chroma Key RGB Mode
-})(exports.KeyingType || (exports.KeyingType = {}));
-var KeyingType = exports.KeyingType;
-/**
- *  Used by items that implement the Chroma interface, when using RGB mode
- *  Chroma Key.
- *
- *  Check `getChromaRGBKeyPrimaryColor()`/`setChromaRGBKeyPrimaryColor()` method
- *  of {@link #core/CameraItem Core/CameraItem},
- *  {@link #core/GameItem Core/GameItem}, and
- *  {@link #core/HTMLItem Core/HTMLItem}.
- */
-(function (ChromaPrimaryColors) {
-    ChromaPrimaryColors[ChromaPrimaryColors["RED"] = 0] = "RED";
-    ChromaPrimaryColors[ChromaPrimaryColors["GREEN"] = 1] = "GREEN";
-    ChromaPrimaryColors[ChromaPrimaryColors["BLUE"] = 2] = "BLUE";
-})(exports.ChromaPrimaryColors || (exports.ChromaPrimaryColors = {}));
-var ChromaPrimaryColors = exports.ChromaPrimaryColors;
-/**
- *  Used by items that implement the Chroma interface.
- *
- *  Check `getChromaAntiAliasLevel()`/`setChromaAntiAliasLevel()` method
- *  of {@link #core/CameraItem Core/CameraItem},
- *  {@link #core/GameItem Core/GameItem}, and
- *  {@link #core/HTMLItem Core/HTMLItem}.
- */
-(function (ChromaAntiAliasLevel) {
-    ChromaAntiAliasLevel[ChromaAntiAliasLevel["NONE"] = 0] = "NONE";
-    ChromaAntiAliasLevel[ChromaAntiAliasLevel["LOW"] = 1] = "LOW";
-    ChromaAntiAliasLevel[ChromaAntiAliasLevel["HIGH"] = 2] = "HIGH";
-})(exports.ChromaAntiAliasLevel || (exports.ChromaAntiAliasLevel = {}));
-var ChromaAntiAliasLevel = exports.ChromaAntiAliasLevel;
-var ItemChroma = (function () {
-    function ItemChroma() {
-    }
-    ItemChroma.prototype.isChromaEnabled = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:key_chromakey', slot).then(function (val) {
-                resolve(val === '1');
-            });
-        });
-    };
-    ItemChroma.prototype.setChromaEnabled = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (typeof value !== 'boolean') {
-                reject(TypeError('Parameter should be boolean.'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:key_chromakey', (value ? '1' : '0'), slot).then(function () {
-                    resolve(_this);
-                });
-            }
-        });
-    };
-    ItemChroma.prototype.getKeyingType = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:key_chromakeytype', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    ItemChroma.prototype.setKeyingType = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (typeof value !== 'number') {
-                reject(TypeError('Use a KeyingType value as the parameter.'));
-            }
-            else if (value < 0 || value > 2) {
-                reject(RangeError('Use a KeyingType value as the parameter.'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:key_chromakeytype', String(value), slot).then(function () {
-                    resolve(_this);
-                });
-            }
-        });
-    };
-    ItemChroma.prototype.getChromaAntiAliasLevel = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:key_antialiasing', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    ItemChroma.prototype.setChromaAntiAliasLevel = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (typeof value !== 'number') {
-                reject(TypeError('Use a ChromaAntiAliasLevel value as the parameter.'));
-            }
-            else if (value < 0 || value > 2) {
-                reject(RangeError('Use a ChromaAntiAliasLevel value as the parameter.'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:key_antialiasing', String(value), slot).then(function () {
-                    resolve(_this);
-                });
-            }
-        });
-    };
-    // CHROMA LEGACY MODE FUNCTIONS
-    ItemChroma.prototype.getChromaLegacyBrightness = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:key_chromabr', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    ItemChroma.prototype.setChromaLegacyBrightness = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (typeof value !== 'number') {
-                reject(TypeError('Use an integer as the parameter.'));
-            }
-            else if (value < 0 || value > 255) {
-                reject(RangeError('Valid value is an integer from 0-255.'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:key_chromabr', String(value), slot).then(function () {
-                    resolve(_this);
-                });
-            }
-        });
-    };
-    ItemChroma.prototype.getChromaLegacySaturation = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:key_chromasat', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    ItemChroma.prototype.setChromaLegacySaturation = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (typeof value !== 'number') {
-                reject(TypeError('Use an integer as the parameter.'));
-            }
-            else if (value < 0 || value > 255) {
-                reject(RangeError('Valid value is an integer from 0-255.'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:key_chromasat', String(value), slot).then(function () {
-                    resolve(_this);
-                });
-            }
-        });
-    };
-    ItemChroma.prototype.getChromaLegacyHue = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:key_chromahue', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    ItemChroma.prototype.setChromaLegacyHue = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (typeof value !== 'number') {
-                reject(TypeError('Use an integer as the parameter.'));
-            }
-            else if (value < 0 || value > 180) {
-                reject(RangeError('Valid value is an integer from 0-180.'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:key_chromahue', String(value), slot).then(function () {
-                    resolve(_this);
-                });
-            }
-        });
-    };
-    ItemChroma.prototype.getChromaLegacyThreshold = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:key_chromarang', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    ItemChroma.prototype.setChromaLegacyThreshold = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (typeof value !== 'number') {
-                reject(TypeError('Use an integer as the parameter.'));
-            }
-            else if (value < 0 || value > 255) {
-                reject(RangeError('Valid value is an integer from 0-255.'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:key_chromarang', String(value), slot).then(function () {
-                    resolve(_this);
-                });
-            }
-        });
-    };
-    ItemChroma.prototype.getChromaLegacyAlphaSmoothing = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:key_chromaranga', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    ItemChroma.prototype.setChromaLegacyAlphaSmoothing = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (typeof value !== 'number') {
-                reject(TypeError('Use an integer as the parameter.'));
-            }
-            else if (value < 0 || value > 255) {
-                reject(RangeError('Valid value is an integer from 0-255.'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:key_chromaranga', String(value), slot).then(function () {
-                    resolve(_this);
-                });
-            }
-        });
-    };
-    // CHROMA RGB KEY FUNCTIONS
-    ItemChroma.prototype.getChromaRGBKeyPrimaryColor = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:key_chromargbkeyprimary', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    ItemChroma.prototype.setChromaRGBKeyPrimaryColor = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (typeof value !== 'number') {
-                reject(TypeError('Use a ChromaPrimaryColors value as the parameter.'));
-            }
-            else if (value < 0 || value > 2) {
-                reject(RangeError('Use a ChromaPrimaryColors value as the parameter.'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:key_chromargbkeyprimary', String(value), slot)
-                    .then(function () {
-                    resolve(_this);
-                });
-            }
-        });
-    };
-    ItemChroma.prototype.getChromaRGBKeyThreshold = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:key_chromargbkeythresh', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    ItemChroma.prototype.setChromaRGBKeyThreshold = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (typeof value !== 'number') {
-                reject(TypeError('Use an integer as the parameter.'));
-            }
-            else if (value < 0 || value > 255) {
-                reject(RangeError('Valid value is an integer from 0-255.'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:key_chromargbkeythresh', String(value), slot)
-                    .then(function () {
-                    resolve(_this);
-                });
-            }
-        });
-    };
-    ItemChroma.prototype.getChromaRGBKeyExposure = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:key_chromargbkeybalance', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    ItemChroma.prototype.setChromaRGBKeyExposure = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (typeof value !== 'number') {
-                reject(TypeError('Use an integer as the parameter.'));
-            }
-            else if (value < 0 || value > 255) {
-                reject(RangeError('Valid value is an integer from 0-255.'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:key_chromargbkeybalance', String(value), slot)
-                    .then(function () {
-                    resolve(_this);
-                });
-            }
-        });
-    };
-    // CHROMA COLOR KEY FUNCTIONS
-    ItemChroma.prototype.getChromaColorKeyThreshold = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:key_colorrang', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    ItemChroma.prototype.setChromaColorKeyThreshold = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (typeof value !== 'number') {
-                reject(TypeError('Use an integer as the parameter.'));
-            }
-            else if (value < 0 || value > 255) {
-                reject(RangeError('Valid value is an integer from 0-255.'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:key_colorrang', String(value), slot).then(function () {
-                    resolve(_this);
-                });
-            }
-        });
-    };
-    ItemChroma.prototype.getChromaColorKeyExposure = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:key_colorranga', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    ItemChroma.prototype.setChromaColorKeyExposure = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (typeof value !== 'number') {
-                reject(TypeError('Use an integer as the parameter.'));
-            }
-            else if (value < 0 || value > 255) {
-                reject(RangeError('Valid value is an integer from 0-255.'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:key_colorranga', String(value), slot).then(function () {
-                    resolve(_this);
-                });
-            }
-        });
-    };
-    ItemChroma.prototype.getChromaColorKeyColor = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:key_colorrgb', slot).then(function (val) {
-                var color = color_1.Color.fromBGRString(val);
-                resolve(color);
-            });
-        });
-    };
-    ItemChroma.prototype.setChromaColorKeyColor = function (value) {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.set('prop:key_colorrgb', String(value.getIbgr()), slot).then(function () {
-                resolve(_this);
-            });
-        });
-    };
-    return ItemChroma;
-})();
-exports.ItemChroma = ItemChroma;
-},{"../../internal/item":21,"../../util/color":30}],10:[function(require,module,exports){
-/// <reference path="../../../defs/es6-promise.d.ts" />
-var item_1 = require('../../internal/item');
-var color_1 = require('../../util/color');
-var ItemColor = (function () {
-    function ItemColor() {
-    }
-    ItemColor.prototype.getTransparency = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:alpha', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    ItemColor.prototype.setTransparency = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (value < 0 || value > 255) {
-                reject(RangeError('Transparency may only be in the range 0 to 255.'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:alpha', String(value), slot).then(function () {
-                    resolve(_this);
-                });
-            }
-        });
-    };
-    ItemColor.prototype.getBrightness = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:cc_brightness', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    ItemColor.prototype.setBrightness = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (value < -100 || value > 100) {
-                reject(RangeError('Brightness may only be in the range -100 to 100.'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:cc_brightness', String(value), slot).then(function () {
-                    resolve(_this);
-                });
-            }
-        });
-    };
-    ItemColor.prototype.getContrast = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:cc_contrast', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    ItemColor.prototype.setContrast = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (value < -100 || value > 100) {
-                reject(RangeError('Contrast may only be in the range -100 to 100.'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:cc_contrast', String(value), slot).then(function () {
-                    resolve(_this);
-                });
-            }
-        });
-    };
-    ItemColor.prototype.getHue = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:cc_hue', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    ItemColor.prototype.setHue = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (value < -180 || value > 180) {
-                reject(RangeError('Contrast may only be in the range -180 to 180.'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:cc_hue', String(value), slot).then(function () {
-                    resolve(_this);
-                });
-            }
-        });
-    };
-    ItemColor.prototype.getSaturation = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:cc_saturation', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    ItemColor.prototype.setSaturation = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (value < -100 || value > 100) {
-                reject(RangeError('Saturation may only be in the range -100 to 100'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:cc_saturation', String(value), slot).then(function () {
-                    resolve(_this);
-                });
-            }
-        });
-    };
-    ItemColor.prototype.getBorderColor = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:border', slot).then(function (val) {
-                var bgr = Number(val) - 0x80000000;
-                var color = color_1.Color.fromBGRInt(bgr);
-                resolve(color);
-            });
-        });
-    };
-    ItemColor.prototype.setBorderColor = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.set('prop:border', String(value.getIbgr() - 0x80000000), slot).then(function () {
-                resolve(_this);
-            });
-        });
-    };
-    return ItemColor;
-})();
-exports.ItemColor = ItemColor;
-},{"../../internal/item":21,"../../util/color":30}],11:[function(require,module,exports){
-/// <reference path="../../../defs/es6-promise.d.ts" />
-var item_1 = require('../../internal/item');
-var global_1 = require('../../internal/global');
-var internal_1 = require('../../internal/internal');
-var environment_1 = require('../environment');
-var ItemConfigurable = (function () {
-    function ItemConfigurable() {
-    }
-    ItemConfigurable.prototype.loadConfig = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:BrowserConfiguration', slot).then(function (config) {
-                var configObj = config === 'null' ? {} : JSON.parse(config);
-                var persist = global_1.Global.getPersistentConfig();
-                for (var key in persist) {
-                    delete configObj[key];
-                }
+            internal_1.exec('GetPresProperty', _this._presName, function (config) {
+                var configObj = config === '' ? {} : JSON.parse(config);
                 resolve(configObj);
             });
         });
     };
-    ItemConfigurable.prototype.saveConfig = function (configObj) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (environment_1.Environment.isSourcePlugin) {
-                var slot = item_1.Item.attach(_this._id);
-                // only allow direct saving for self
-                if (slot === 0) {
-                    // check for valid object
-                    if ({}.toString.call(configObj) === '[object Object]') {
-                        // add persisted configuration if available
-                        // currently only top level merging is available
-                        var persist = global_1.Global.getPersistentConfig();
-                        for (var key in persist) {
-                            configObj[key] = persist[key];
-                        }
-                        internal_1.exec('SetBrowserProperty', 'Configuration', JSON.stringify(configObj));
-                        resolve(_this);
-                    }
-                    else {
-                        reject(Error('Configuration object should be ' +
-                            'in JSON format.'));
-                    }
-                }
-                else {
-                    reject(Error('Sources may only request other ' +
-                        'sources to save a configuration. Consider ' +
-                        'calling requestSaveConfig() on this Item ' +
-                        'instance instead.'));
-                }
-            }
-            else {
-                reject(Error('Extensions and source configuration windows are ' +
-                    'not allowed to directly save configuration objects. ' +
-                    'Call requestSaveConfig() instead.'));
-            }
-        });
-    };
-    ItemConfigurable.prototype.requestSaveConfig = function (configObj) {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            internal_1.exec('CallInner' + (slot === 0 ? '' : (slot + 1)), 'MessageSource', JSON.stringify({
-                'request': 'saveConfig',
-                'data': configObj
-            }));
-            resolve(_this);
-        });
-    };
-    ItemConfigurable.prototype.applyConfig = function (configObj) {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            internal_1.exec('CallInner' + (slot === 0 ? '' : (slot + 1)), 'MessageSource', JSON.stringify({
-                'request': 'applyConfig',
-                'data': configObj
-            }));
-            resolve(_this);
-        });
-    };
-    return ItemConfigurable;
+    return Extension;
 })();
-exports.ItemConfigurable = ItemConfigurable;
-},{"../../internal/global":18,"../../internal/internal":20,"../../internal/item":21,"../environment":3}],12:[function(require,module,exports){
-/// <reference path="../../../defs/es6-promise.d.ts" />
-var item_1 = require('../../internal/item');
-var rectangle_1 = require('../../util/rectangle');
-var ItemLayout = (function () {
-    function ItemLayout() {
-    }
-    ItemLayout.prototype.isKeepAspectRatio = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:keep_ar', slot).then(function (val) {
-                resolve(val === '1');
-            });
-        });
-    };
-    ItemLayout.prototype.setKeepAspectRatio = function (value) {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.set('prop:keep_ar', value ? '1' : '0', slot).then(function () {
-                resolve(_this);
-            });
-        });
-    };
-    ItemLayout.prototype.isPositionLocked = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:lockmove', slot).then(function (val) {
-                resolve(val === '1');
-            });
-        });
-    };
-    ItemLayout.prototype.setPositionLocked = function (value) {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.set('prop:lockmove', value ? '1' : '0', slot).then(function () {
-                resolve(_this);
-            });
-        });
-    };
-    ItemLayout.prototype.isEnhancedResizeEnabled = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:mipmaps', slot).then(function (val) {
-                resolve(val === '1');
-            });
-        });
-    };
-    ItemLayout.prototype.setEnhancedResizeEnabled = function (value) {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.set('prop:mipmaps', value ? '1' : '0', slot).then(function () {
-                resolve(_this);
-            });
-        });
-    };
-    ItemLayout.prototype.getPosition = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:pos', slot).then(function (val) {
-                var _a = decodeURIComponent(val).split(','), left = _a[0], top = _a[1], right = _a[2], bottom = _a[3];
-                _this.position = rectangle_1.Rectangle.fromCoordinates(Number(top), Number(left), Number(right), Number(bottom));
-                resolve(_this.position);
-            });
-        });
-    };
-    ItemLayout.prototype.setPosition = function (value) {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            _this.position = value;
-            item_1.Item.set('prop:pos', value.toCoordinateString(), slot).then(function () {
-                resolve(_this);
-            });
-        });
-    };
-    ItemLayout.prototype.getRotateY = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:rotate_y', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    ItemLayout.prototype.setRotateY = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (value < -360 || value > 360) {
-                reject(Error('Invalid value. Min: -360, Max: 360'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:rotate_y', String(value), slot).then(function () {
-                    resolve(_this);
-                });
-            }
-        });
-    };
-    ItemLayout.prototype.getRotateX = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:rotate_x', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    ItemLayout.prototype.setRotateX = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (value < -360 || value > 360) {
-                reject(Error('Invalid value. Min: -360, Max: 360'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:rotate_x', String(value), slot).then(function () {
-                    resolve(_this);
-                });
-            }
-        });
-    };
-    ItemLayout.prototype.getRotateZ = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:rotate_z', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    ItemLayout.prototype.setRotateZ = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (value < -360 || value > 360) {
-                reject(Error('Invalid value. Min: -360, Max: 360'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:rotate_z', String(value), slot).then(function () {
-                    resolve(_this);
-                });
-            }
-        });
-    };
-    return ItemLayout;
-})();
-exports.ItemLayout = ItemLayout;
-},{"../../internal/item":21,"../../util/rectangle":34}],13:[function(require,module,exports){
-/// <reference path="../../../defs/es6-promise.d.ts" />
-var mixin_1 = require('../../internal/util/mixin');
-var item_1 = require('../../internal/item');
-var environment_1 = require('../environment');
-var json_1 = require('../../internal/util/json');
-var xml_1 = require('../../internal/util/xml');
-var scene_1 = require('../scene');
-var ilayout_1 = require('./ilayout');
-(function (ItemTypes) {
-    ItemTypes[ItemTypes["UNDEFINED"] = 0] = "UNDEFINED";
-    ItemTypes[ItemTypes["FILE"] = 1] = "FILE";
-    ItemTypes[ItemTypes["LIVE"] = 2] = "LIVE";
-    ItemTypes[ItemTypes["TEXT"] = 3] = "TEXT";
-    ItemTypes[ItemTypes["BITMAP"] = 4] = "BITMAP";
-    ItemTypes[ItemTypes["SCREEN"] = 5] = "SCREEN";
-    ItemTypes[ItemTypes["FLASHFILE"] = 6] = "FLASHFILE";
-    ItemTypes[ItemTypes["GAMESOURCE"] = 7] = "GAMESOURCE";
-    ItemTypes[ItemTypes["HTML"] = 8] = "HTML";
-})(exports.ItemTypes || (exports.ItemTypes = {}));
-var ItemTypes = exports.ItemTypes;
-/**
- * An `Item` represents an object that is used as a source on the stage.
- * Some possible sources are games, microphones, or a webpage.
- *
- * ### Basic Usage
- *
- * ```javascript
- * var xjs = require('xjs');
- * var Scene = xjs.Scene.getById(0);
- *
- * Scene.getItems().then(function(items) {
- *   if (items.length === 0) return;
- *
- *   // There's a valid item, let's use that
- *   var item = items[items.length - 1];
- *   return item.setCustomName('ItemTesting');
- * }).then(function(item) {
- *   // Do something else here
- * });
- * ```
- * All methods marked as *Chainable* resolve with the original `Item` instance.
- * This allows you to perform sequential operations correctly:
- * ```javascript
- * var xjs = require('xjs');
- * var Item = xjs.Item;
- *
- * // a source that sets its own properties on load
- * xjs.ready()
- *    .then(Item.getCurrentSource)
- *    .then(function(item) {
- *     return item.setCustomName('MyCustomName');
- *  }).then(function(item) {
- *     return item.setKeepLoaded(true);
- *  }).then(function(item) {
- *     // set more properties here
- *  });
- * ```
- */
-var Item = (function () {
-    function Item(props) {
-        props = props ? props : {};
-        this._name = props['name'];
-        this._cname = props['cname'];
-        this._id = props['id'];
-        this._sceneID = props['sceneID'];
-        this._value = props['value'];
-        this._keepLoaded = props['keeploaded'];
-        this._type = Number(props['type']);
-        this._xmlparams = props;
-    }
-    /**
-     * param: (value: string)
-     * ```
-     * return: Promise<Item>
-     * ```
-     *
-     * Sets the name of the item.
-     *
-     * *Chainable.*
-     *
-     * #### Usage
-     *
-     * ```javascript
-     * item.setName('newNameHere').then(function(item) {
-     *   // Promise resolves with same Item instance when name has been set
-     *   return item.getName();
-     * }).then(function(name) {
-     *   // 'name' should be the updated value by now.
-     * });
-     * ```
-     */
-    Item.prototype.setName = function (value) {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            _this._name = value;
-            item_1.Item.set('prop:name', _this._name, slot).then(function () {
-                resolve(_this);
-            });
-        });
-    };
-    /**
-     * return: Promise<string>
-     *
-     * Gets the name of the item.
-     *
-     * #### Usage
-     *
-     * ```javascript
-     * item.getName().then(function(name) {
-     *   // Do something with the name
-     * });
-     * ```
-     */
-    Item.prototype.getName = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:name', slot).then(function (val) {
-                _this._name = val;
-                resolve(val);
-            });
-        });
-    };
-    /**
-     * param: (value: string)
-     * ```
-     * return: Promise<Item>
-     * ```
-     *
-     * Sets the custom name of the item.
-     *
-     * The main difference between `setName` and `setCustomName` is that the CustomName
-     * can be edited by users using XBC through the bottom panel. `setName` on
-     * the other hand would update the item's internal name property.
-     *
-     * *Chainable.*
-     *
-     * #### Usage
-     *
-     * ```javascript
-     * item.setCustomName('newNameHere').then(function(item) {
-     *   // Promise resolves with same Item instance when custom name has been set
-     *   return item.getCustomName();
-     * }).then(function(name) {
-     *   // 'name' should be the updated value by now.
-     * });
-     * ```
-     */
-    Item.prototype.setCustomName = function (value) {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            _this._cname = value;
-            item_1.Item.set('prop:cname', _this._cname, slot).then(function () {
-                resolve(_this);
-            });
-        });
-    };
-    /**
-     * return: Promise<string>
-     *
-     * Gets the custom name of the item.
-     *
-     * #### Usage
-     *
-     * ```javascript
-     * item.getCustomName().then(function(name) {
-     *   // Do something with the name
-     * });
-     * ```
-     */
-    Item.prototype.getCustomName = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:cname', slot).then(function (val) {
-                _this._cname = val;
-                resolve(val);
-            });
-        });
-    };
-    /**
-     * return: Promise<string|XML>
-     *
-     * Gets the custom name of the item.
-     *
-     * This method can resolve with an XML object, which is an object generated by
-     * the framework. Call `toString()` to transform into an XML String. (See the
-     * documentation for `setValue` for more details.)
-     *
-     * #### Usage
-     *
-     * ```javascript
-     * item.getCustomName().then(function(name) {
-     *   // Do something with the name
-     * });
-     * ```
-     */
-    Item.prototype.getValue = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:item', slot).then(function (val) {
-                val = (val === 'null') ? '' : val;
-                if (val === '') {
-                    _this._value = '';
-                    resolve(val);
-                }
-                else {
-                    try {
-                        _this._value = xml_1.XML.parseJSON(json_1.JSON.parse(val));
-                        resolve(_this._value);
-                    }
-                    catch (e) {
-                        // value is not valid XML (it is a string instead)
-                        _this._value = val;
-                        resolve(val);
-                    }
-                }
-            });
-        });
-    };
-    /**
-     * param: (value: string)
-     * ```
-     * return: Promise<Item>
-     * ```
-     *
-     * Set the video item's main definition.
-     *
-     * *Chainable.*
-     *
-     * **WARNING:**
-     * Please do note that using this method COULD break the current item, possibly modifying
-     * its type IF you set an invalid string for the current item.
-     *
-     * #### Possible values by item type
-     * - FILE - path/URL
-     * - LIVE - Device ID
-     * - BITMAP - path
-     * - SCREEN - XML string
-     * - FLASHFILE - path
-     * - GAMESOURCE - XML string
-     * - HTML - path/URL or html:<plugin>
-     *
-     * #### Usage
-     *
-     * ```javascript
-     * item.setValue('@DEVICE:PNP:\\?\USB#VID_046D&amp;PID_082C&amp;MI_02#6&amp;16FD2F8D&amp;0&amp;0002#{65E8773D-8F56-11D0-A3B9-00A0C9223196}\GLOBAL')
-     *   .then(function(item) {
-     *   // Promise resolves with same Item instance
-     * });
-     * ```
-     */
-    Item.prototype.setValue = function (value) {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            var val = (typeof value === 'string') ?
-                value : value.toString();
-            if (typeof value !== 'string') {
-                _this._value = json_1.JSON.parse(val);
-            }
-            else {
-                _this._value = val;
-            }
-            item_1.Item.set('prop:item', val, slot).then(function () {
-                resolve(_this);
-            });
-        });
-    };
-    /**
-     * return: Promise<boolean>
-     *
-     * Check if item is kept loaded in memory
-     *
-     * #### Usage
-     *
-     * ```javascript
-     * item.getKeepLoaded().then(function(isLoaded) {
-     *   // The rest of your code here
-     * });
-     * ```
-     */
-    Item.prototype.getKeepLoaded = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:keeploaded', slot).then(function (val) {
-                _this._keepLoaded = (val === '1');
-                resolve(_this._keepLoaded);
-            });
-        });
-    };
-    /**
-     * param: (value: boolean)
-     * ```
-     * return: Promise<Item>
-     * ```
-     *
-     * Set Keep loaded option to ON or OFF
-     *
-     * *Chainable.*
-     *
-     * #### Usage
-     *
-     * ```javascript
-     * item.setKeepLoaded(true).then(function(item) {
-     *   // Promise resolves with same Item instance
-     * });
-     * ```
-     */
-    Item.prototype.setKeepLoaded = function (value) {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            _this._keepLoaded = value;
-            item_1.Item.set('prop:keeploaded', (_this._keepLoaded ? '1' : '0'), slot)
-                .then(function () {
-                resolve(_this);
-            });
-        });
-    };
-    /**
-     * return: Promise<ItemTypes>
-     *
-     * Get the type of the item
-     *
-     * #### Usage
-     *
-     * ```javascript
-     * item.getType().then(function(type) {
-     *   // The rest of your code here
-     * });
-     * ```
-     */
-    Item.prototype.getType = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:type', slot).then(function (val) {
-                _this._type = ItemTypes[ItemTypes[Number(val)]];
-                resolve(_this._type);
-            });
-        });
-    };
-    /**
-     * return: Promise<string>
-     *
-     * Get the ID of the item
-     *
-     * #### Usage
-     *
-     * ```javascript
-     * item.getID().then(function(id) {
-     *   // The rest of your code here
-     * });
-     * ```
-     */
-    Item.prototype.getID = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            resolve(_this._id);
-        });
-    };
-    /**
-     * return: Promise<number>
-     *
-     * Get (1-indexed) Scene ID where the item is loaded
-     *
-     * #### Usage
-     *
-     * ```javascript
-     * item.getSceneID().then(function(id) {
-     *   // The rest of your code here
-     * });
-     * ```
-     */
-    Item.prototype.getSceneID = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            resolve(Number(_this._sceneID) + 1);
-        });
-    };
-    /**
-     * return: XML
-     *
-     * Convert the Item object to an XML object. Use `toString()` to
-     * get the string version of the returned object.
-     *
-     * #### Usage
-     *
-     * ```javascript
-     * var xml = item.toXML();
-     * ```
-     */
-    Item.prototype.toXML = function () {
-        var item = new json_1.JSON();
-        item['tag'] = 'item';
-        item['name'] = this._name;
-        item['item'] = this._value;
-        item['type'] = this._type;
-        item['selfclosing'] = true;
-        if (this._cname) {
-            item['cname'] = this._cname;
-        }
-        return xml_1.XML.parseJSON(item);
-    };
-    /**
-     * return: Promise<Item>
-     *
-     * Get the current source (when function is called by sources), or the source
-     * that was right-clicked to open the config window (when function is called
-     * from the config window)
-     *
-     * #### Usage
-     *
-     * ```javascript
-     * xjs.Item.getCurrentSource().then(function(item) {
-     *   // This will fetch the current item (the plugin)
-     * }).catch(function(err) {
-     *   // Handle the error here. Errors would only occur
-     *   // if we try to execute this method on Extension plugins
-     * });
-     * ```
-     */
-    Item.getCurrentSource = function () {
-        return new Promise(function (resolve, reject) {
-            if (environment_1.Environment.isExtension()) {
-                reject(Error('Extensions do not have sources ' +
-                    'associated with them.'));
-            }
-            else if (environment_1.Environment.isSourcePlugin() || environment_1.Environment.isSourceConfig()) {
-                scene_1.Scene.searchAllForItemId(item_1.Item.getBaseID()).then(function (item) {
-                    resolve(item); // this should always exist
-                });
-            }
-        });
-    };
-    return Item;
-})();
-exports.Item = Item;
-mixin_1.applyMixins(Item, [ilayout_1.ItemLayout]);
-},{"../../internal/item":21,"../../internal/util/json":22,"../../internal/util/mixin":23,"../../internal/util/xml":24,"../environment":3,"../scene":15,"./ilayout":12}],14:[function(require,module,exports){
-/// <reference path="../../../defs/es6-promise.d.ts" />
-var item_1 = require('../../internal/item');
-var transition_1 = require('../transition');
-var ItemTransition = (function () {
-    function ItemTransition() {
-    }
-    ItemTransition.prototype.isVisible = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:visible', slot).then(function (val) {
-                resolve(val === '1' ? true : false);
-            });
-        });
-    };
-    ItemTransition.prototype.setVisible = function (value) {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.set('prop:visible', value ? '1' : '0', slot).then(function () {
-                resolve(_this);
-            });
-        });
-    };
-    ItemTransition.prototype.getTransition = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:transitionid', slot).then(function (val) {
-                if (val === '') {
-                    resolve(transition_1.Transition.NONE);
-                }
-                else {
-                    resolve(transition_1.Transition[val.toUpperCase()]);
-                }
-            });
-        });
-    };
-    ItemTransition.prototype.setTransition = function (value) {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.set('prop:transitionid', value.toString(), slot).then(function () {
-                resolve(_this);
-            });
-        });
-    };
-    ItemTransition.prototype.getTransitionTime = function () {
-        var _this = this;
-        return new Promise(function (resolve) {
-            var slot = item_1.Item.attach(_this._id);
-            item_1.Item.get('prop:transitiontime', slot).then(function (val) {
-                resolve(Number(val));
-            });
-        });
-    };
-    ItemTransition.prototype.setTransitionTime = function (value) {
-        var _this = this;
-        return new Promise(function (resolve, reject) {
-            if (value < 0 || value > 60000) {
-                reject(RangeError('Transparency may only be in the range 0 to 60000.'));
-            }
-            else {
-                var slot = item_1.Item.attach(_this._id);
-                item_1.Item.set('prop:transitiontime', String(value), slot).then(function () {
-                    resolve(_this);
-                });
-            }
-        });
-    };
-    return ItemTransition;
-})();
-exports.ItemTransition = ItemTransition;
-},{"../../internal/item":21,"../transition":16}],15:[function(require,module,exports){
+exports.Extension = Extension;
+},{"../core/environment":4,"../internal/internal":28}],6:[function(require,module,exports){
 /// <reference path="../../defs/es6-promise.d.ts" />
 var json_1 = require('../internal/util/json');
 var xml_1 = require('../internal/util/xml');
 var app_1 = require('../internal/app');
 var internal_1 = require('../internal/internal');
 var environment_1 = require('./environment');
-var item_1 = require('./item/item');
-var game_1 = require('./item/game');
-var camera_1 = require('./item/camera');
-var audio_1 = require('./item/audio');
-var html_1 = require('./item/html');
+var source_1 = require('./source/source');
+var game_1 = require('./source/game');
+var camera_1 = require('./source/camera');
+var audio_1 = require('./source/audio');
+var html_1 = require('./source/html');
+var flash_1 = require('./source/flash');
+var screen_1 = require('./source/screen');
+var image_1 = require('./source/image');
+var media_1 = require('./source/media');
 var Scene = (function () {
     function Scene(sceneNum) {
         this._id = sceneNum - 1;
@@ -3185,7 +1443,7 @@ var Scene = (function () {
                 app_1.App.get('presetconfig:-1').then(function (sceneString) {
                     var curScene = json_1.JSON.parse(sceneString);
                     if (curScene.children.length > 0) {
-                        resolve(Scene.searchSceneWithItemId(curScene.children[0]['id']));
+                        resolve(Scene.searchScenesBySourceId(curScene.children[0]['id']));
                     }
                     else {
                         throw new Error('presetconfig cannot fetch current scene');
@@ -3214,7 +1472,7 @@ var Scene = (function () {
             }
             else {
                 if (scene instanceof Scene) {
-                    scene.getID().then(function (id) {
+                    scene.getId().then(function (id) {
                         app_1.App.set('preset', String(id)).then(function (res) {
                             resolve(res);
                         });
@@ -3237,25 +1495,25 @@ var Scene = (function () {
         });
     };
     /**
-     * return: Promise<Item>
+     * return: Promise<Source>
      *
-     * Searches all scenes for an item by ID. ID search will return exactly 1 result (IDs are unique) or null.
+     * Searches all scenes for an source by ID. ID search will return exactly 1 result (IDs are unique) or null.
      *
-     * See also: @{link #core/Item Core/Item}
+     * See also: {@link #core/Source Core/Source}
      *
      * #### Usage
      *
      * ```javascript
-     * Scene.searchAllForItemId('{10F04AE-6215-3A88-7899-950B12186359}').then(function(item) {
-     *   // item is either an Item or null
+     * Scene.searchSourcesById('{10F04AE-6215-3A88-7899-950B12186359}').then(function(source) {
+     *   // result is either a Source or null
      * });
      * ```
      *
      */
-    Scene.searchAllForItemId = function (id) {
-        var isID = /^{[A-F0-9-]*}$/i.test(id);
+    Scene.searchSourcesById = function (id) {
+        var isID = /^{[A-F0-9\-]*}$/i.test(id);
         if (!isID) {
-            throw new Error('Not a valid ID format for items');
+            throw new Error('Not a valid ID format for sources');
         }
         else {
             Scene._initializeScenePool();
@@ -3264,10 +1522,10 @@ var Scene = (function () {
                 var found = false;
                 Scene._scenePool.forEach(function (scene, idx, arr) {
                     if (match === null) {
-                        scene.getItems().then((function (items) {
-                            found = items.some(function (item) {
-                                if (item['_id'] === id) {
-                                    match = item;
+                        scene.getSources().then((function (sources) {
+                            found = sources.some(function (source) {
+                                if (source['_id'] === id.toUpperCase()) {
+                                    match = source;
                                     return true;
                                 }
                                 else {
@@ -3288,22 +1546,22 @@ var Scene = (function () {
     /**
      * return: Promise<Scene>
      *
-     * Searches all scenes for one that contains the given item ID.
+     * Searches all scenes for one that contains the given source ID.
      *
      *
      * #### Usage
      *
      * ```javascript
-     * Scene.searchSceneWithItemId('{10F04AE-6215-3A88-7899-950B12186359}').then(function(scene) {
-     *   // scene contains the item
+     * Scene.searchScenesBySourceId('{10F04AE-6215-3A88-7899-950B12186359}').then(function(scene) {
+     *   // scene contains the source
      * });
      * ```
      *
      */
-    Scene.searchSceneWithItemId = function (id) {
+    Scene.searchScenesBySourceId = function (id) {
         var isID = /^{[A-F0-9-]*}$/i.test(id);
         if (!isID) {
-            throw new Error('Not a valid ID format for items');
+            throw new Error('Not a valid ID format for sources');
         }
         else {
             Scene._initializeScenePool();
@@ -3312,9 +1570,9 @@ var Scene = (function () {
                 var found = false;
                 Scene._scenePool.forEach(function (scene, idx, arr) {
                     if (match === null) {
-                        scene.getItems().then(function (items) {
-                            found = items.some(function (item) {
-                                if (item['_id'] === id) {
+                        scene.getSources().then(function (sources) {
+                            found = sources.some(function (source) {
+                                if (source['_id'] === id.toUpperCase()) {
                                     match = Scene.getById(idx + 1);
                                     return true;
                                 }
@@ -3334,60 +1592,172 @@ var Scene = (function () {
     };
     ;
     /**
-     * return: Promise<Item[]>
+     * return: Promise<Source[]>
      *
-     * Searches all scenes for an item by name substring.
+     * Searches all scenes for a source by name substring. This function
+     * compares against custom name first (recommended) before falling back to the
+     * name property of the source.
      *
      *
      * #### Usage
      *
      * ```javascript
-     * Scene.searchAllForItemName('camera').then(function(items) {
-     *   // do something to each item in items array
+     * Scene.searchSourcesByName('camera').then(function(sources) {
+     *   // do something to each source in sources array
      * });
      * ```
      *
      */
-    Scene.searchAllForItemName = function (param) {
-        Scene._initializeScenePool();
-        var matches = [];
+    Scene.searchSourcesByName = function (param) {
+        var _this = this;
         return new Promise(function (resolve) {
-            return Promise.all(Scene._scenePool.map(function (scene) {
-                return new Promise(function (resolveScene) {
-                    scene.getItems().then(function (items) {
-                        if (items.length === 0) {
-                            resolveScene();
+            _this.filterSources(function (source, filterResolve) {
+                source.getCustomName().then(function (cname) {
+                    if (cname.match(param)) {
+                        filterResolve(true);
+                    }
+                    else {
+                        return source.getName();
+                    }
+                }).then(function (name) {
+                    if (name !== undefined) {
+                        if (name.match(param)) {
+                            filterResolve(true);
                         }
                         else {
-                            return Promise.all(items.map(function (item) {
-                                return new Promise(function (resolveItem) {
-                                    item.getName().then(function (name) {
-                                        if (name.match(param)) {
-                                            matches.push(item);
-                                            return '';
-                                        }
-                                        else {
-                                            return item.getValue();
-                                        }
-                                    }).then(function (value) {
-                                        if (value.toString().match(param)) {
-                                            matches.push(item);
-                                        }
-                                        resolveItem();
-                                    });
-                                });
-                            })).then(function () {
-                                resolveScene();
-                            });
+                            return source.getValue();
                         }
-                    });
+                    }
+                }).then(function (value) {
+                    if (value !== undefined) {
+                        if (value.toString().match(param)) {
+                            filterResolve(true);
+                        }
+                        else {
+                            filterResolve(false);
+                        }
+                    }
                 });
-            })).then(function () {
-                resolve(matches);
+            }).then(function (sources) {
+                resolve(sources);
             });
         });
     };
     ;
+    /**
+     * param: function(source, resolve)
+     * ```
+     * return: Promise<Source[]>
+     * ```
+     *
+     * Searches all scenes for sources that satisfies the provided testing function.
+     *
+     * #### Usage
+     *
+     * ```javascript
+     * Scene.filterSources(function(source, resolve) {
+     *   // We'll only fetch Flash Sources by resolving 'true' if the source is an
+     *   // instance of FlashSource
+     *   resolve((source instanceof FlashSource));
+     * }).then(function(sources) {
+     *   // sources would either be an empty array if no Flash sources was found,
+     *   // or an array of FlashSource objects
+     * });
+     * ```
+     */
+    Scene.filterSources = function (func) {
+        Scene._initializeScenePool();
+        var matches = [];
+        return new Promise(function (resolve, reject) {
+            if (typeof func === 'function') {
+                return Promise.all(Scene._scenePool.map(function (scene) {
+                    return new Promise(function (resolveScene) {
+                        scene.getSources().then(function (sources) {
+                            if (sources.length === 0) {
+                                resolveScene();
+                            }
+                            else {
+                                return Promise.all(sources.map(function (source) {
+                                    return new Promise(function (resolveSource) {
+                                        func(source, function (checker) {
+                                            if (checker) {
+                                                matches.push(source);
+                                            }
+                                            resolveSource();
+                                        });
+                                    });
+                                })).then(function () {
+                                    resolveScene();
+                                });
+                            }
+                        });
+                    });
+                })).then(function () {
+                    resolve(matches);
+                });
+            }
+            else {
+                reject(Error('Parameter is not a function'));
+            }
+        });
+    };
+    /**
+     * param: function(source, resolve)
+     * ```
+     * return: Promise<Scene[]>
+     * ```
+     *
+     * Searches all scenes for sources that satisfies the provided testing
+     * function, and then return the scene that contains the source.
+     *
+     * #### Usage
+     *
+     * ```javascript
+     * Scene.filterScenesBySources(function(source, resolve) {
+     *   // We'll only fetch the scenes with flash sources by resolving 'true' if
+     *   // the source is an instance of FlashSource
+     *   resolve((source instanceof FlashSource));
+     * }).then(function(scenes) {
+     *   // scenes would be an array of all scenes with FlashSources
+     * });
+     * ```
+     */
+    Scene.filterScenesBySources = function (func) {
+        Scene._initializeScenePool();
+        var matches = [];
+        return new Promise(function (resolve, reject) {
+            if (typeof func === 'function') {
+                return Promise.all(Scene._scenePool.map(function (scene) {
+                    return new Promise(function (resolveScene) {
+                        scene.getSources().then(function (sources) {
+                            if (sources.length === 0) {
+                                resolveScene();
+                            }
+                            else {
+                                return Promise.all(sources.map(function (source) {
+                                    return new Promise(function (resolveSource) {
+                                        func(source, function (checker) {
+                                            if (checker) {
+                                                matches.push(scene);
+                                            }
+                                            resolveSource();
+                                        });
+                                    });
+                                })).then(function () {
+                                    resolveScene();
+                                });
+                            }
+                        });
+                    });
+                })).then(function () {
+                    resolve(matches);
+                });
+            }
+            else {
+                reject(Error('Parameter is not a function'));
+            }
+        });
+    };
     /**
      * return: Promise<boolean>
   
@@ -3493,49 +1863,65 @@ var Scene = (function () {
         });
     };
     /**
-     * return: Promise<Item[]>
+     * return: Promise<Source[]>
      *
-     * Gets all the items (sources) in a specific scene.
-     * See also: @{link #core/Item Core/Item}
+     * Gets all the sources in a specific scene.
+     * See also: {@link #core/Source Core/Source}
      *
      * #### Usage
      *
      * ```javascript
-     * myScene.getItems().then(function(items) {
-     *  // do something to each item in items array
+     * myScene.getSources().then(function(sources) {
+     *  // do something to each source in sources array
      * });
      * ```
      */
-    Scene.prototype.getItems = function () {
+    Scene.prototype.getSources = function () {
         var _this = this;
         return new Promise(function (resolve) {
             app_1.App.getAsList('presetconfig:' + _this._id).then(function (jsonArr) {
                 var promiseArray = [];
-                // type checking to return correct Item subtype
+                // type checking to return correct Source subtype
                 var typePromise = function (index) { return new Promise(function (typeResolve) {
-                    var item = jsonArr[index];
-                    var type = Number(item['type']);
-                    if (type === item_1.ItemTypes.GAMESOURCE) {
-                        typeResolve(new game_1.GameItem(item));
+                    var source = jsonArr[index];
+                    var type = Number(source['type']);
+                    if (type === source_1.SourceTypes.GAMESOURCE) {
+                        typeResolve(new game_1.GameSource(source));
                     }
-                    else if (type === item_1.ItemTypes.HTML) {
-                        typeResolve(new html_1.HTMLItem(item));
+                    else if (type === source_1.SourceTypes.HTML) {
+                        typeResolve(new html_1.HtmlSource(source));
                     }
-                    else if (Number(jsonArr[index]['type']) === item_1.ItemTypes.LIVE &&
-                        jsonArr[index]['item'].indexOf('{33D9A762-90C8-11D0-BD43-00A0C911CE86}') === -1) {
-                        typeResolve(new camera_1.CameraItem(jsonArr[index]));
+                    else if (type === source_1.SourceTypes.SCREEN) {
+                        typeResolve(new screen_1.ScreenSource(source));
                     }
-                    else if (Number(jsonArr[index]['type']) === item_1.ItemTypes.LIVE &&
-                        jsonArr[index]['item'].indexOf('{33D9A762-90C8-11D0-BD43-00A0C911CE86}') !== -1) {
-                        typeResolve(new audio_1.AudioItem(jsonArr[index]));
+                    else if (type === source_1.SourceTypes.BITMAP ||
+                        type === source_1.SourceTypes.FILE &&
+                            /\.gif$/.test(source['item'])) {
+                        typeResolve(new image_1.ImageSource(source));
+                    }
+                    else if (type === source_1.SourceTypes.FILE &&
+                        /\.(gif|xbs)$/.test(source['item']) === false &&
+                        /^(rtsp|rtmp):\/\//.test(source['item']) === false) {
+                        typeResolve(new media_1.MediaSource(source));
+                    }
+                    else if (Number(source['type']) === source_1.SourceTypes.LIVE &&
+                        source['item'].indexOf('{33D9A762-90C8-11D0-BD43-00A0C911CE86}') === -1) {
+                        typeResolve(new camera_1.CameraSource(source));
+                    }
+                    else if (Number(source['type']) === source_1.SourceTypes.LIVE &&
+                        source['item'].indexOf('{33D9A762-90C8-11D0-BD43-00A0C911CE86}') !== -1) {
+                        typeResolve(new audio_1.AudioSource(source));
+                    }
+                    else if (Number(source['type']) === source_1.SourceTypes.FLASHFILE) {
+                        typeResolve(new flash_1.FlashSource(source));
                     }
                     else {
-                        typeResolve(new item_1.Item(jsonArr[index]));
+                        typeResolve(new source_1.Source(source));
                     }
                 }); };
                 if (Array.isArray(jsonArr)) {
                     for (var i = 0; i < jsonArr.length; i++) {
-                        jsonArr[i]['sceneID'] = _this._id;
+                        jsonArr[i]['sceneId'] = _this._id;
                         promiseArray.push(typePromise(i));
                     }
                 }
@@ -3567,31 +1953,31 @@ var Scene = (function () {
         });
     };
     /**
-     * param: Array<Item> | Array<string> (item IDs)
+     * param: Array<Source> | Array<string> (source IDs)
      * ```
      * return: Promise<Scene>
      * ```
      *
-     * Sets the item order of the current scene. The first item in the array will
-     * be on top (will cover items below it).
+     * Sets the source order of the current scene. The first source in the array
+     * will be on top (will cover sources below it).
      */
-    Scene.prototype.setItemOrder = function (items) {
+    Scene.prototype.setSourceOrder = function (sources) {
         var _this = this;
         return new Promise(function (resolve, reject) {
             if (environment_1.Environment.isSourcePlugin()) {
                 reject(Error('not available for source plugins'));
             }
             else {
-                items.reverse();
+                sources.reverse();
                 var ids = [];
                 Scene.getActiveScene().then(function (scene) {
-                    if (items.every(function (el) { return el instanceof item_1.Item; })) {
+                    if (sources.every(function (el) { return el instanceof source_1.Source; })) {
                         return new Promise(function (resolve) {
                             var promises = [];
-                            for (var i in items) {
+                            for (var i in sources) {
                                 promises.push((function (_i) {
                                     return new Promise(function (resolve) {
-                                        items[_i].getID().then(function (id) {
+                                        sources[_i].getId().then(function (id) {
                                             ids[_i] = id;
                                             resolve(_this);
                                         });
@@ -3606,7 +1992,7 @@ var Scene = (function () {
                         });
                     }
                     else {
-                        ids = items;
+                        ids = sources;
                         return scene.getSceneNumber();
                     }
                 }).then(function (id) {
@@ -3640,7 +2026,7 @@ var Scene = (function () {
                                 });
                             }
                             else {
-                                reject(Error('Scene does not have any items'));
+                                reject(Error('Scene does not have any source'));
                             }
                         });
                     }
@@ -3653,7 +2039,3328 @@ var Scene = (function () {
     return Scene;
 })();
 exports.Scene = Scene;
-},{"../internal/app":17,"../internal/internal":20,"../internal/util/json":22,"../internal/util/xml":24,"./environment":3,"./item/audio":4,"./item/camera":5,"./item/game":6,"./item/html":7,"./item/item":13}],16:[function(require,module,exports){
+},{"../internal/app":25,"../internal/internal":28,"../internal/util/json":30,"../internal/util/xml":32,"./environment":4,"./source/audio":7,"./source/camera":8,"./source/flash":10,"./source/game":11,"./source/html":12,"./source/image":18,"./source/media":21,"./source/screen":22,"./source/source":23}],7:[function(require,module,exports){
+/// <reference path="../../../defs/es6-promise.d.ts" />
+var __extends = (this && this.__extends) || function (d, b) {
+    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+    function __() { this.constructor = d; }
+    __.prototype = b.prototype;
+    d.prototype = new __();
+};
+var mixin_1 = require('../../internal/util/mixin');
+var item_1 = require('../../internal/item');
+var iaudio_1 = require('./iaudio');
+var source_1 = require('./source');
+/**
+ * The AudioSource class represents an audio device that has been added
+ * to the stage.
+ *
+ * Inherits from: {@link #core/Source Core/Source}
+ *
+ * Implements: {@link #core/IItemAudio Core/IItemAudio}
+ *
+ * ### Basic Usage
+ *
+ * ```javascript
+ * var XJS = require('xjs');
+ *
+ * XJS.Scene.getActiveScene().then(function(scene) {
+ *   scene.getSources().then(function(sources) {
+ *     for (var i in sources) {
+ *       if (sources[i] instanceof XJS.AudioSource) {
+ *         // Manipulate your audio device source here
+ *         sources[i].setSilenceDetectionEnabled(true);
+ *       }
+ *     }
+ *   });
+ * });
+ * ```
+ *
+ *  All methods marked as *Chainable* resolve with the original `AudioSource`
+ *  instance.
+ */
+var AudioSource = (function (_super) {
+    __extends(AudioSource, _super);
+    function AudioSource() {
+        _super.apply(this, arguments);
+    }
+    /**
+     * return: Promise<boolean>
+     *
+     * Check if silence detection is on or off
+     */
+    AudioSource.prototype.isSilenceDetectionEnabled = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:AudioGainEnable', _this._id).then(function (val) {
+                resolve(val === '1');
+            });
+        });
+    };
+    /**
+     * param: (value: boolean)
+     *
+     * Set silence detection to ON or OFF
+     *
+     * *Chainable.*
+     */
+    AudioSource.prototype.setSilenceDetectionEnabled = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            item_1.Item.set('prop:AudioGainEnable', (value ? '1' : '0'), _this._id)
+                .then(function (res) {
+                resolve(_this);
+            });
+        });
+    };
+    /**
+     * return: Promise<number>
+     *
+     * Gets silenced detection threshold.
+     * Amplitude less than threshold will be detected as silence.
+     */
+    AudioSource.prototype.getSilenceThreshold = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:AudioGain', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    /**
+     * param: (value: number)
+     *
+     * Sets silence detection threshold, min of 0, max of 128
+     *
+     * *Chainable.*
+     */
+    AudioSource.prototype.setSilenceThreshold = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (typeof value !== 'number') {
+                reject(Error('Only numbers are acceptable values for threshold'));
+            }
+            else if (value % 1 !== 0 || value < 0 || value > 128) {
+                reject(Error('Only integers in the range 0-128 are acceptable for threshold'));
+            }
+            else {
+                item_1.Item.set('prop:AudioGain', String(value), _this._id).then(function (res) {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    /**
+     * return: Promise<number>
+     *
+     * Gets silenced detection period in ms time unit.
+     * Reaction time before filter removes noice/sound less than threshold
+     */
+    AudioSource.prototype.getSilencePeriod = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:AudioGainLatency', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    /**
+     * param: (value: number)
+     *
+     * Sets silence detection period, min of 0, max of 10000
+     *
+     * *Chainable.*
+     */
+    AudioSource.prototype.setSilencePeriod = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (typeof value !== 'number') {
+                reject(Error('Only numbers are acceptable values for period'));
+            }
+            else if (value % 1 !== 0 || value < 0 || value > 10000) {
+                reject(Error('Only integers in the range 0-10000 are acceptable for period'));
+            }
+            else {
+                item_1.Item.set('prop:AudioGainLatency', String(value), _this._id).then(function (res) {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    /**
+     * return: Promise<number>
+     *
+     * Gets audio delay (1 unit = 100ns)
+     */
+    AudioSource.prototype.getAudioOffset = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:AudioDelay', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    /**
+     * param: (value: number)
+     *
+     * Sets audio delay, accepts only positive delay
+     *
+     * *Chainable.*
+     */
+    AudioSource.prototype.setAudioOffset = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (typeof value !== 'number') {
+                reject(Error('Only numbers are acceptable values for period'));
+            }
+            else if (value < 0) {
+                reject(Error('Audio offset cannot be negative'));
+            }
+            else {
+                item_1.Item.set('prop:AudioDelay', String(value), _this._id).then(function (res) {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    return AudioSource;
+})(source_1.Source);
+exports.AudioSource = AudioSource;
+mixin_1.applyMixins(source_1.Source, [iaudio_1.ItemAudio]);
+},{"../../internal/item":29,"../../internal/util/mixin":31,"./iaudio":13,"./source":23}],8:[function(require,module,exports){
+/// <reference path="../../../defs/es6-promise.d.ts" />
+var __extends = (this && this.__extends) || function (d, b) {
+    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+    function __() { this.constructor = d; }
+    __.prototype = b.prototype;
+    d.prototype = new __();
+};
+var mixin_1 = require('../../internal/util/mixin');
+var item_1 = require('../../internal/item');
+var ilayout_1 = require('./ilayout');
+var icolor_1 = require('./icolor');
+var ichroma_1 = require('./ichroma');
+var itransition_1 = require('./itransition');
+var iaudio_1 = require('./iaudio');
+var source_1 = require('./source');
+var system_1 = require('../../system/system');
+/**
+ * The CameraSource Class provides methods specifically used for camera sources and
+ * also methods that are shared between Source Classes. The
+ * {@link #core/Scene Scene} class' getSources method would automatically return a
+ * CameraSource object if there's a camera source on the specified scene.
+ *
+ * Inherits from: {@link #core/Source Core/Source}
+ *
+ * Implements: {@link #core/IItemChroma Core/IItemChroma},
+ * {@link #core/IItemColor Core/IItemColor},
+ * {@link #core/IItemLayout Core/IItemLayout},
+ * {@link #core/IItemTransition Core/IItemTransition},
+ * {@link #core/IItemAudio Core/IItemAudio}
+ *
+ * ### Basic Usage
+ *
+ * ```javascript
+ * var XJS = require('xjs');
+ *
+ * XJS.Scene.getActiveScene().then(function(scene) {
+ *   scene.getSources().then(function(sources) {
+ *     for (var i in sources) {
+ *       if (sources[i] instanceof XJS.CameraSource) {
+ *         // Manipulate your camera sources here
+ *         sources[i].getDeviceId().then(function(id) {
+ *           // Do something with the id
+ *         });
+ *       }
+ *     }
+ *   });
+ * });
+ * ```
+ *
+ *  All methods marked as *Chainable* resolve with the original `CameraSource`
+ *  instance.
+ */
+var CameraSource = (function (_super) {
+    __extends(CameraSource, _super);
+    function CameraSource() {
+        _super.apply(this, arguments);
+        this._delayExclusionObject = {
+            roxio: "vid_1b80&pid_e0(01|11|12)",
+            hauppauge1: "vid_2040&pid_49(0[0-3]|8[0-3])",
+            hauppauge2: "vid_2040&pid_e50[012a4]"
+        };
+    }
+    /**
+     * return: Promise<string>
+     *
+     * Gets the device ID of the underlying camera device.
+     */
+    CameraSource.prototype.getDeviceId = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:item', _this._id).then(function (val) {
+                resolve(val);
+            });
+        });
+    };
+    /**
+     * return: Promise<boolean>
+     *
+     * Checks if camera feed is paused
+     */
+    CameraSource.prototype.isStreamPaused = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:StreamPause', _this._id).then(function (val) {
+                resolve(val === '1');
+            });
+        });
+    };
+    /**
+     * param: (value: boolean)
+     *
+     * Sets whether camera feed is paused or not
+     *
+     * *Chainable.*
+     */
+    CameraSource.prototype.setStreamPaused = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            item_1.Item.set('prop:StreamPause', value ? '1' : '0', _this._id).then(function () {
+                return item_1.Item.get('prop:StreamPause', _this._id);
+            }).then(function (val) {
+                if (value === (val === ('1'))) {
+                    resolve(_this);
+                }
+                else {
+                    reject(new Error('Camera feed cannot be paused/resumed or is not present'));
+                }
+            });
+        });
+    };
+    /**
+     * return: Promise<boolean>
+     *
+     * Checks if camera device is a hardware encoder or not. This check may fail
+     * if camera device is reinitializing or not present (value defaults to false)
+     *
+     */
+    CameraSource.prototype.isHardwareEncoder = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:hwencoder', _this._id).then(function (val) {
+                resolve(val === '1');
+            });
+        });
+    };
+    /**
+     * return: Promise<number>
+     *
+     * Gets feed capture delay in milliseconds
+     */
+    CameraSource.prototype.getDelay = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            var streamDelay, audioDelay;
+            item_1.Item.get('prop:StreamDelay', _this._id).then(function (val) {
+                streamDelay = Number(val);
+                return item_1.Item.get('prop:AudioDelay', _this._id);
+            }).then(function (val) {
+                audioDelay = Number(val);
+                if (streamDelay < audioDelay) {
+                    resolve(streamDelay / 10000);
+                }
+                else {
+                    resolve(audioDelay / 10000);
+                }
+            });
+        });
+    };
+    /**
+     * param: (value: number)
+     *
+     * Sets feed capture delay in milliseconds, accepts only positive delay
+     *
+     * *Chainable.*
+     */
+    CameraSource.prototype.setDelay = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            var isPositive, audioOffset;
+            _this.isHardwareEncoder().then(function (val) {
+                if (val === true) {
+                    reject(new Error('Cannot set delay to hardware encoder devices'));
+                }
+                else {
+                    return _this.getValue();
+                }
+            }).then(function (val) {
+                for (var key in _this._delayExclusionObject) {
+                    var regex = new RegExp(_this._delayExclusionObject[key].toLowerCase(), 'g');
+                    if (typeof val === 'string' && val.toLowerCase().match(regex) != null) {
+                        reject(new Error('Cannot set delay to specific device'));
+                        break;
+                    }
+                }
+                return _this.getAudioOffset();
+            }).then(function (val) {
+                audioOffset = val;
+                if (audioOffset >= 0) {
+                    isPositive = true;
+                    return item_1.Item.set('prop:StreamDelay', String(value * 10000), _this._id);
+                }
+                else {
+                    isPositive = false;
+                    return item_1.Item.set('prop:StreamDelay', String((value + (audioOffset * -1)) * 10000), _this._id);
+                }
+            }).then(function (val) {
+                if (isPositive) {
+                    return item_1.Item.set('prop:AudioDelay', String((value + audioOffset) * 10000), _this._id);
+                }
+                else {
+                    return item_1.Item.set('prop:AudioDelay', String(value * 10000), _this._id);
+                }
+            }).then(function (val) {
+                resolve(_this);
+            });
+        });
+    };
+    /**
+     * return: Promise<number>
+     *
+     * Gets audio delay with respect to video feed in milliseconds
+     */
+    CameraSource.prototype.getAudioOffset = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            var streamDelay, audioDelay;
+            item_1.Item.get('prop:StreamDelay', _this._id).then(function (val) {
+                streamDelay = Number(val);
+                return item_1.Item.get('prop:AudioDelay', _this._id);
+            }).then(function (val) {
+                audioDelay = Number(val);
+                resolve((audioDelay - streamDelay) / 10000);
+            });
+        });
+    };
+    /**
+     * param: (value: number)
+     *
+     * Sets audio delay with respect to video feed in milliseconds
+     *
+     * *Chainable.*
+     */
+    CameraSource.prototype.setAudioOffset = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            var itemAudio, delay;
+            item_1.Item.get('prop:itemaudio', _this._id).then(function (val) {
+                itemAudio = val;
+                return _this.isAudioAvailable();
+            }).then(function (val) {
+                if (val === false && itemAudio === '') {
+                    reject(new Error('Device has no audio'));
+                }
+                else {
+                    return _this.getDelay();
+                }
+            }).then(function (val) {
+                delay = val;
+                if (value >= 0) {
+                    return item_1.Item.set('prop:StreamDelay', String(delay * 10000), _this._id);
+                }
+                else {
+                    return item_1.Item.set('prop:StreamDelay', String((delay + (value * -1)) * 10000), _this._id);
+                }
+            }).then(function (val) {
+                if (value >= 0) {
+                    return item_1.Item.set('prop:AudioDelay', String((delay + value) * 10000), _this._id);
+                }
+                else {
+                    return item_1.Item.set('prop:AudioDelay', String(delay * 10000), _this._id);
+                }
+            }).then(function (val) {
+                resolve(_this);
+            });
+        });
+    };
+    /**
+     * return: Promise<MicrophoneDevice>
+     *
+     * Gets the microphone device tied as an audio input,
+     * rejected if no microphone device is used
+     */
+    CameraSource.prototype.getAudioInput = function () {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            var itemAudioId;
+            item_1.Item.get('prop:itemaudio', _this._id).then(function (val) {
+                if (val === '') {
+                    reject(new Error('No tied audio input'));
+                }
+                else {
+                    itemAudioId = val;
+                    return system_1.System.getMicrophones();
+                }
+            }).then(function (val) {
+                var micDevice;
+                if (val !== undefined) {
+                    for (var i = 0; i < val.length; ++i) {
+                        if (val[i].getDisplayId() === itemAudioId) {
+                            micDevice = val[i];
+                            break;
+                        }
+                    }
+                }
+                if (micDevice !== undefined) {
+                    resolve(micDevice);
+                }
+                else {
+                    reject(new Error('Tied audio input not present'));
+                }
+            });
+        });
+    };
+    /**
+     * param: (value: number)
+     *
+     * Sets the microphone device to be tied as an audio input
+     *
+     * *Chainable.*
+     */
+    CameraSource.prototype.setAudioInput = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            item_1.Item.set('prop:itemaudio', value.getDisplayId(), _this._id)
+                .then(function (val) {
+                resolve(_this);
+            });
+        });
+    };
+    // special color options pinning
+    /**
+     * param: (value: boolean)
+     *
+     * Set this to true to share color settings across all instances of this
+     * camera device on the stage.
+     *
+     * *Chainable.*
+     */
+    CameraSource.prototype.setColorOptionsPinned = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('prop:cc_pin', value ? '1' : '0', _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    /**
+     * return: Promise<boolean>
+     *
+     * Checks whether color settings are shared across all instances of
+     * this camera device on the stage.
+     */
+    CameraSource.prototype.getColorOptionsPinned = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:cc_pin', _this._id).then(function (val) {
+                resolve(val === '1' ? true : false);
+            });
+        });
+    };
+    // special chroma options pinning
+    /**
+     * param: (value: boolean)
+     *
+     * Set this to true to share chroma keying settings across all instances of
+     * this camera device on the stage.
+     *
+     * *Chainable.*
+     */
+    CameraSource.prototype.setKeyingOptionsPinned = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('prop:key_pin', value ? '1' : '0', _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    /**
+     * return: Promise<boolean>
+     *
+     * Checks whether chroma keying settings are shared across all instances of
+     * this camera device on the stage.
+     */
+    CameraSource.prototype.getKeyingOptionsPinned = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:key_pin', _this._id).then(function (val) {
+                resolve(val === '1' ? true : false);
+            });
+        });
+    };
+    return CameraSource;
+})(source_1.Source);
+exports.CameraSource = CameraSource;
+mixin_1.applyMixins(CameraSource, [ilayout_1.ItemLayout, icolor_1.ItemColor, ichroma_1.ItemChroma, itransition_1.ItemTransition,
+    iaudio_1.ItemAudio]);
+},{"../../internal/item":29,"../../internal/util/mixin":31,"../../system/system":39,"./iaudio":13,"./ichroma":14,"./icolor":15,"./ilayout":17,"./itransition":20,"./source":23}],9:[function(require,module,exports){
+/**
+ *  A CuePoint represents a configurable object for sources that
+ *  support cue points. Check `getCuePoints()` and other related methods of
+ *  {@link #core/MediaSource#getCuePoints Core/MediaSource}.
+ */
+var CuePoint = (function () {
+    function CuePoint(time, action) {
+        this._time = time;
+        this._action = action;
+    }
+    CuePoint.prototype.toString = function () {
+        return String(this._time * 10000000) + this._action;
+    };
+    /**
+     * param: number
+     *
+     * Sets this cue point's time in seconds, with precision up to 100ns.
+     */
+    CuePoint.prototype.setTime = function (time) {
+        this._time = time;
+    };
+    /**
+     *  param: string
+     *
+     *  Sets the action to be performed on the cue point. Choose any of the
+     *  following values: CuePoint.PAUSE, CuePoint.RESUME, CuePoint.CUT.
+     */
+    CuePoint.prototype.setAction = function (action) {
+        if (action === CuePoint.PAUSE || action === CuePoint.RESUME ||
+            action === CuePoint.CUT) {
+            this._action = action;
+        }
+        else {
+            throw new Error('Trying to set to an invalid Cue Point action.');
+        }
+    };
+    /**
+     * return: number
+     *
+     * Gets the time in seconds corresponding to this cue point, with precision
+     * up to 100ns.
+     */
+    CuePoint.prototype.getTime = function () {
+        return this._time / 10000000;
+    };
+    /**
+     *  return: string
+     *
+     *  Gets the action to be performed on the cue point, which may be any of the
+     *  following: CuePoint.PAUSE, CuePoint.RESUME, CuePoint.CUT.
+     */
+    CuePoint.prototype.getAction = function () {
+        return this._action;
+    };
+    CuePoint._fromString = function (value) {
+        var _a = [value.substring(0, value.length - 1),
+            value.charAt(value.length - 1)], time = _a[0], action = _a[1];
+        return new CuePoint(Number(time), action);
+    };
+    CuePoint.PAUSE = 'p';
+    CuePoint.RESUME = 'r';
+    CuePoint.CUT = 's';
+    return CuePoint;
+})();
+exports.CuePoint = CuePoint;
+},{}],10:[function(require,module,exports){
+/// <reference path="../../../defs/es6-promise.d.ts" />
+var __extends = (this && this.__extends) || function (d, b) {
+    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+    function __() { this.constructor = d; }
+    __.prototype = b.prototype;
+    d.prototype = new __();
+};
+var mixin_1 = require('../../internal/util/mixin');
+var item_1 = require('../../internal/item');
+var ilayout_1 = require('./ilayout');
+var icolor_1 = require('./icolor');
+var ichroma_1 = require('./ichroma');
+var itransition_1 = require('./itransition');
+var iaudio_1 = require('./iaudio');
+var source_1 = require('./source');
+var rectangle_1 = require('../../util/rectangle');
+/**
+ * The FlashSource class represents a flash source, which is any SWF file
+ * loaded to XSplit Broadcaster.
+ *
+ * Inherits from: {@link #core/Source Core/Source}
+ *
+ * Implements: {@link #core/IItemChroma Core/IItemChroma},
+ * {@link #core/IItemColor Core/IItemColor},
+ * {@link #core/IItemLayout Core/IItemLayout},
+ * {@link #core/IItemTransition Core/IItemTransition},
+ * {@link #core/IItemAudio Core/IItemAudio}
+ *
+ *  All methods marked as *Chainable* resolve with the original `FlashSource`
+ * instance. Also, any audio setting, i.e. volume, mute, stream only
+ * may not be properly reflected in the source unless native flash audio support
+ * is enabled. (Tools menu > General Settings > Advanced tab)
+ */
+var FlashSource = (function (_super) {
+    __extends(FlashSource, _super);
+    function FlashSource() {
+        _super.apply(this, arguments);
+    }
+    /**
+     * return: Promise<Rectangle>
+     *
+     * Gets the custom resolution (in pixels) for the source, if set,
+     * regardless of its layout on the mixer. Returns a (0, 0) Rectangle if no
+     * custom resolution has been set.
+     *
+     * See also: {@link #util/Rectangle Util/Rectangle}
+     */
+    FlashSource.prototype.getCustomResolution = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            var customSize;
+            item_1.Item.get('prop:BrowserSize', _this._id).then(function (val) {
+                if (val !== '') {
+                    var _a = decodeURIComponent(val).split(','), width = _a[0], height = _a[1];
+                    customSize = rectangle_1.Rectangle.fromDimensions(Number(width), Number(height));
+                }
+                else {
+                    customSize = rectangle_1.Rectangle.fromDimensions(0, 0);
+                }
+                resolve(customSize);
+            });
+        });
+    };
+    /**
+     * param: (value: Rectangle)
+     * ```
+     * return: Promise<FlashSource>
+     * ```
+     *
+     * Sets the custom resolution for the source
+     * regardless of its layout on the mixer
+     *
+     * *Chainable.*
+     *
+     * See also: {@link #util/Rectangle Util/Rectangle}
+     */
+    FlashSource.prototype.setCustomResolution = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('prop:BrowserSize', value.toDimensionString(), _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    return FlashSource;
+})(source_1.Source);
+exports.FlashSource = FlashSource;
+mixin_1.applyMixins(FlashSource, [ilayout_1.ItemLayout, icolor_1.ItemColor, ichroma_1.ItemChroma, itransition_1.ItemTransition,
+    iaudio_1.ItemAudio]);
+},{"../../internal/item":29,"../../internal/util/mixin":31,"../../util/rectangle":45,"./iaudio":13,"./ichroma":14,"./icolor":15,"./ilayout":17,"./itransition":20,"./source":23}],11:[function(require,module,exports){
+/// <reference path="../../../defs/es6-promise.d.ts" />
+var __extends = (this && this.__extends) || function (d, b) {
+    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+    function __() { this.constructor = d; }
+    __.prototype = b.prototype;
+    d.prototype = new __();
+};
+var mixin_1 = require('../../internal/util/mixin');
+var item_1 = require('../../internal/item');
+var ilayout_1 = require('./ilayout');
+var icolor_1 = require('./icolor');
+var ichroma_1 = require('./ichroma');
+var itransition_1 = require('./itransition');
+var source_1 = require('./source');
+var json_1 = require('../../internal/util/json');
+var xml_1 = require('../../internal/util/xml');
+var source_2 = require('./source');
+var environment_1 = require('../environment');
+/**
+ * The GameSource Class provides methods specifically used for game sources and
+ * also methods that is shared between Source Classes. The
+ * {@link #core/Scene Scene} class' getSources method would automatically return a
+ * GameSource object if there's a game source on the specified scene.
+ *
+ * Inherits from: {@link #core/Source Core/Source}
+ *
+ * Implements: {@link #core/IItemChroma Core/IItemChroma},
+ * {@link #core/IItemColor Core/IItemColor},
+ * {@link #core/IItemLayout Core/IItemLayout},
+ * {@link #core/IItemTransition Core/IItemTransition}
+ *
+ * ### Basic Usage
+ *
+ * ```javascript
+ * var XJS = require('xjs');
+ *
+ * XJS.Scene.getActiveScene().then(function(scene) {
+ *   scene.getSources().then(function(sources) {
+ *     for (var i in sources) {
+ *       if (sources[i] instanceof XJS.GameSource) {
+ *         // Manipulate your game source here
+ *         sources[i].setOfflineImage(path); // just an example here
+ *       }
+ *     }
+ *   });
+ * });
+ * ```
+ *
+ *  All methods marked as *Chainable* resolve with the original `GameSource`
+ *  instance.
+ */
+var GameSource = (function (_super) {
+    __extends(GameSource, _super);
+    function GameSource() {
+        _super.apply(this, arguments);
+    }
+    /**
+     * return: Promise<boolean>
+     *
+     * Check if Game Special Optimization is currently enabled or not
+     */
+    GameSource.prototype.isSpecialOptimizationEnabled = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('GameCapSurfSharing', _this._id).then(function (res) {
+                resolve(res === '1');
+            });
+        });
+    };
+    /**
+     * param: Promise<boolean>
+     *
+     * Set Game Special Optimization to on or off
+     *
+     * *Chainable.*
+     */
+    GameSource.prototype.setSpecialOptimizationEnabled = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('GameCapSurfSharing', (value ? '1' : '0'), _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    /**
+     * return: Promise<boolean>
+     *
+     * Check if Show Mouse is currently enabled or not
+     */
+    GameSource.prototype.isShowMouseEnabled = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('GameCapShowMouse', _this._id).then(function (res) {
+                resolve(res === '1');
+            });
+        });
+    };
+    /**
+     * param: (value: boolean)
+     *
+     * Set Show Mouse in game to on or off
+     *
+     * *Chainable.*
+     */
+    GameSource.prototype.setShowMouseEnabled = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('GameCapShowMouse', (value ? '1' : '0'), _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    /**
+     * param: path<string>
+     *
+     * Set the offline image of a game source
+     *
+     * *Chainable.*
+     */
+    GameSource.prototype.setOfflineImage = function (path) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (_this._type !== source_2.SourceTypes.GAMESOURCE) {
+                reject(Error('Current source should be a game source'));
+            }
+            else if (environment_1.Environment.isSourcePlugin()) {
+                reject(Error('Source plugins cannot update offline images of other sources'));
+            }
+            else if (!(_this._value instanceof xml_1.XML)) {
+                _this.getValue().then(function () {
+                    _this.setOfflineImage(path).then(function (itemObj) {
+                        resolve(itemObj);
+                    });
+                });
+            }
+            else {
+                var regExp = new RegExp('^(([A-Z|a-z]:\\\\[^*|"<>?\n]*)|(\\\\\\\\.*?' +
+                    '\\\\.*)|([A-Za-z]+\\\\[^*|"<>?\\n]*))\.(png|gif|jpg|jpeg|tif)$');
+                if (regExp.test(path) || path === '') {
+                    var valueObj = json_1.JSON.parse(_this._value.toString());
+                    valueObj['replace'] = path;
+                    _this.setValue(xml_1.XML.parseJSON(valueObj)).then(function () {
+                        resolve(_this);
+                    });
+                }
+            }
+        });
+    };
+    /**
+     * return: Promise<string>
+     *
+     * Get the offline image of a game source
+     */
+    GameSource.prototype.getOfflineImage = function () {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (_this._type !== source_2.SourceTypes.GAMESOURCE) {
+                reject(Error('Current source should be a game source'));
+            }
+            else {
+                _this.getValue().then(function () {
+                    var valueObj = json_1.JSON.parse(_this._value.toString());
+                    resolve(valueObj['replace'] ? valueObj['replace'] : '');
+                });
+            }
+        });
+    };
+    return GameSource;
+})(source_1.Source);
+exports.GameSource = GameSource;
+mixin_1.applyMixins(GameSource, [ilayout_1.ItemLayout, icolor_1.ItemColor, ichroma_1.ItemChroma, itransition_1.ItemTransition]);
+},{"../../internal/item":29,"../../internal/util/json":30,"../../internal/util/mixin":31,"../../internal/util/xml":32,"../environment":4,"./ichroma":14,"./icolor":15,"./ilayout":17,"./itransition":20,"./source":23}],12:[function(require,module,exports){
+/// <reference path="../../../defs/es6-promise.d.ts" />
+var __extends = (this && this.__extends) || function (d, b) {
+    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+    function __() { this.constructor = d; }
+    __.prototype = b.prototype;
+    d.prototype = new __();
+};
+var internal_1 = require('../../internal/internal');
+var mixin_1 = require('../../internal/util/mixin');
+var item_1 = require('../../internal/item');
+var ilayout_1 = require('./ilayout');
+var icolor_1 = require('./icolor');
+var ichroma_1 = require('./ichroma');
+var itransition_1 = require('./itransition');
+var iconfig_1 = require('./iconfig');
+var iaudio_1 = require('./iaudio');
+var source_1 = require('./source');
+var rectangle_1 = require('../../util/rectangle');
+var environment_1 = require('../environment');
+/**
+ * The HtmlSource class represents a web page source. This covers both source
+ * plugins and non-plugin URLs.
+ *
+ * Inherits from: {@link #core/Source Core/Source}
+ *
+ * Implements: {@link #core/IItemChroma Core/IItemChroma},
+ * {@link #core/IItemColor Core/IItemColor},
+ * {@link #core/IItemLayout Core/IItemLayout},
+ * {@link #core/IItemTransition Core/IItemTransition},
+ * {@link #core/IItemAudio Core/IItemAudio},
+ * {@link #core/IItemConfigurable Core/IItemConfigurable}
+ *
+ * ### Basic Usage
+ *
+ * ```javascript
+ * var XJS = require('xjs');
+ *
+ * XJS.Scene.getActiveScene().then(function(scene) {
+ *   scene.getSources().then(function(sources) {
+ *     for (var i in sources) {
+ *       if (sources[i] instanceof XJS.HtmlSource) {
+ *         // Manipulate your HTML source here
+ *         sources[i].enableBrowserTransparency(true);
+ *       }
+ *     }
+ *   });
+ * });
+ * ```
+ *
+ *  All methods marked as *Chainable* resolve with the original `HtmlSource`
+ * instance. Also, any audio setting, i.e. volume, mute, stream only
+ * may not be properly reflected in the source unless native browser audio support
+ * is enabled. (Tools menu > General Settings > Advanced tab)
+ */
+var HtmlSource = (function (_super) {
+    __extends(HtmlSource, _super);
+    function HtmlSource() {
+        _super.apply(this, arguments);
+    }
+    /**
+     * return: Promise<string>
+     *
+     * Gets the URL of this webpage source.
+     */
+    HtmlSource.prototype.getURL = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:item', _this._id).then(function (url) {
+                var _url = String(url).split('*');
+                url = _url[0];
+                resolve(url);
+            });
+        });
+    };
+    /**
+     * param: (url: string)
+     * ```
+     * return: Promise<HtmlSource>
+     * ```
+     *
+     * Sets the URL of this webpage source.
+     *
+     * *Chainable.*
+     */
+    HtmlSource.prototype.setURL = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            item_1.Item.set('prop:item', value, _this._id).then(function (code) {
+                if (code) {
+                    resolve(_this);
+                }
+                else {
+                    reject('Invalid value');
+                }
+            });
+        });
+    };
+    /**
+     * return: Promise<string>
+     *
+     * Gets the javascript commands to be executed on source upon load
+     */
+    HtmlSource.prototype.getBrowserJS = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:custom', _this._id).then(function (custom) {
+                var customJS = '';
+                try {
+                    var customObject = JSON.parse(custom);
+                    if (customObject.hasOwnProperty('customJS')) {
+                        customJS = customObject['customJS'];
+                    }
+                }
+                catch (e) {
+                }
+                resolve(customJS);
+            });
+        });
+    };
+    /**
+     * param: (js: string, refresh: boolean = false)
+     * ```
+     * return: Promise<HtmlSource>
+     * ```
+     *
+     * Sets the javascript commands to be executed on source
+     * right upon setting and on load. Optionally set second parameter
+     * to true to refresh source (needed to clean previously executed JS code.)
+     *
+     * *Chainable.*
+     */
+    HtmlSource.prototype.setBrowserJS = function (value, refresh) {
+        var _this = this;
+        if (refresh === void 0) { refresh = false; }
+        return new Promise(function (resolve, reject) {
+            var customObject = {};
+            item_1.Item.get('prop:custom', _this._id).then(function (custom) {
+                var customJS = '';
+                var customCSS = '';
+                var scriptString = ' ';
+                var scriptEnabled = true;
+                var cssEnabled = true;
+                try {
+                    customObject = JSON.parse(custom);
+                    if (customObject.hasOwnProperty('cssEnabled')) {
+                        cssEnabled = (customObject['cssEnabled'] == 'true');
+                    }
+                    if (customObject.hasOwnProperty('scriptEnabled')) {
+                        scriptEnabled = (customObject['scriptEnabled'] == 'true');
+                    }
+                    if (customObject.hasOwnProperty('customCSS')) {
+                        customCSS = customObject['customCSS'];
+                    }
+                }
+                catch (e) {
+                }
+                customObject['cssEnabled'] = cssEnabled.toString();
+                customObject['scriptEnabled'] = scriptEnabled.toString();
+                customObject['customCSS'] = customCSS;
+                customObject['customJS'] = value;
+                if (cssEnabled === true) {
+                    var cssScript = "var xjsCSSOverwrite = document.createElement('style');xjsCSSOverwrite.id = 'splitmedialabsCSSOverwrite';xjsCSSOverwrite.type = 'text/css';var h = document.querySelector('head');var existing = document.querySelector('head #splitmedialabsCSSOverwrite');if (existing != null)h.removeChild(existing);xjsCSSOverwrite.innerHTML = '" + customCSS.replace(/(\r\n|\n|\r)/gm, '').replace(/\s{2,}/g, ' ').replace(/(\[br\])/gm, '') + "';h.appendChild(xjsCSSOverwrite);";
+                    scriptString = scriptString + cssScript;
+                }
+                if (value !== '' && scriptEnabled === true) {
+                    scriptString = scriptString + value;
+                }
+                return item_1.Item.set('prop:BrowserJs', scriptString, _this._id);
+            })
+                .then(function () {
+                return item_1.Item.set('prop:custom', JSON.stringify(customObject), _this._id);
+            })
+                .then(function () {
+                if (refresh) {
+                    item_1.Item.set('refresh', '', _this._id).then(function () {
+                        resolve(_this);
+                    });
+                }
+                else {
+                    resolve(_this);
+                }
+            });
+        });
+    };
+    /**
+     * return: Promise<boolean>
+     *
+     * Gets if BrowserJS is enabled and executed on load
+     */
+    HtmlSource.prototype.isBrowserJSEnabled = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:custom', _this._id).then(function (custom) {
+                var enabled = true;
+                try {
+                    var customObject = JSON.parse(custom);
+                    if (customObject.hasOwnProperty('scriptEnabled')) {
+                        enabled = (customObject['scriptEnabled'] == 'true');
+                    }
+                }
+                catch (e) {
+                }
+                resolve(enabled);
+            });
+        });
+    };
+    /**
+     * param: (value: boolean)
+     * ```
+     * return: Promise<HtmlSource>
+     * ```
+     *
+     * Enables or disables execution of the set BrowserJs upon load.
+     * Note that disabling this will require source to be refreshed
+     * in order to remove any BrowserJS previously executed.
+     *
+     * *Chainable.*
+     */
+    HtmlSource.prototype.enableBrowserJS = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            var customObject = {};
+            item_1.Item.get('prop:custom', _this._id).then(function (custom) {
+                var customJS = '';
+                var customCSS = '';
+                var scriptString = ' ';
+                var scriptEnabled = true;
+                var cssEnabled = true;
+                try {
+                    customObject = JSON.parse(custom);
+                    if (customObject.hasOwnProperty('cssEnabled')) {
+                        cssEnabled = (customObject['cssEnabled'] == 'true');
+                    }
+                    if (customObject.hasOwnProperty('customJS')) {
+                        customJS = customObject['customJS'];
+                    }
+                    if (customObject.hasOwnProperty('customCSS')) {
+                        customCSS = customObject['customCSS'];
+                    }
+                }
+                catch (e) {
+                }
+                customObject['cssEnabled'] = cssEnabled.toString();
+                customObject['scriptEnabled'] = value.toString();
+                customObject['customJS'] = customJS;
+                customObject['customCSS'] = customCSS;
+                if (cssEnabled === true) {
+                    var cssScript = 'var xjsCSSOverwrite = document.createElement("style");' +
+                        'xjsCSSOverwrite.id = "splitmedialabsCSSOverwrite";' +
+                        'xjsCSSOverwrite.type = "text/css";' +
+                        'var h = document.querySelector("head");' +
+                        'var existing = document' +
+                        '.querySelector("head #splitmedialabsCSSOverwrite");' +
+                        'if (existing != null)h.removeChild(existing);' +
+                        'xjsCSSOverwrite.innerHTML = "' +
+                        customCSS.replace(/(\r\n|\n|\r)/gm, '')
+                            .replace(/\s{2,}/g, ' ').replace(/(\[br\])/gm, '') + '";"' +
+                        'h.appendChild(xjsCSSOverwrite);';
+                    scriptString = scriptString + cssScript;
+                }
+                if (customJS !== '' && value === true) {
+                    scriptString = scriptString + customJS;
+                }
+                return item_1.Item.set('prop:BrowserJs', scriptString, _this._id);
+            })
+                .then(function () {
+                return item_1.Item.set('prop:custom', JSON.stringify(customObject), _this._id);
+            })
+                .then(function () {
+                if (!value) {
+                    item_1.Item.set('refresh', '', _this._id).then(function () {
+                        resolve(_this);
+                    });
+                }
+                else {
+                    resolve(_this);
+                }
+            });
+        });
+    };
+    /**
+     * return: Promise<string>
+     *
+     * Gets the custom CSS applied to the document upon loading
+     */
+    HtmlSource.prototype.getCustomCSS = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:custom', _this._id).then(function (custom) {
+                var customCSS = '';
+                try {
+                    var customObject = JSON.parse(custom);
+                    if (customObject.hasOwnProperty('customCSS')) {
+                        customCSS = customObject['customCSS'];
+                    }
+                }
+                catch (e) {
+                }
+                resolve(customCSS);
+            });
+        });
+    };
+    /**
+     * param: (value: string)
+     * ```
+     * return: Promise<HtmlSource>
+     * ```
+     *
+     * Sets the custom CSS to be applied to the document upon loading
+     *
+     * *Chainable.*
+     */
+    HtmlSource.prototype.setCustomCSS = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            var customObject = {};
+            item_1.Item.get('prop:custom', _this._id).then(function (custom) {
+                var customJS = '';
+                var customCSS = '';
+                var scriptString = ' ';
+                var scriptEnabled = true;
+                var cssEnabled = true;
+                try {
+                    customObject = JSON.parse(custom);
+                    if (customObject.hasOwnProperty('cssEnabled')) {
+                        cssEnabled = (customObject['cssEnabled'] == 'true');
+                    }
+                    if (customObject.hasOwnProperty('scriptEnabled')) {
+                        scriptEnabled = (customObject['scriptEnabled'] == 'true');
+                    }
+                    if (customObject.hasOwnProperty('customJS')) {
+                        customJS = customObject['customJS'];
+                    }
+                }
+                catch (e) {
+                }
+                customObject['cssEnabled'] = cssEnabled.toString();
+                customObject['scriptEnabled'] = scriptEnabled.toString();
+                customObject['customJS'] = customJS;
+                customObject['customCSS'] = value;
+                if (cssEnabled === true) {
+                    var cssScript = 'var xjsCSSOverwrite = document.createElement("style");' +
+                        'xjsCSSOverwrite.id = "splitmedialabsCSSOverwrite";' +
+                        'xjsCSSOverwrite.type = "text/css";' +
+                        'var h = document.querySelector("head");' +
+                        'var existing = document' +
+                        '.querySelector("head #splitmedialabsCSSOverwrite");' +
+                        'if (existing != null)h.removeChild(existing);' +
+                        'xjsCSSOverwrite.innerHTML = "' +
+                        value.replace(/(\r\n|\n|\r)/gm, '')
+                            .replace(/\s{2,}/g, ' ').replace(/(\[br\])/gm, '') +
+                        '";h.appendChild(xjsCSSOverwrite);';
+                    scriptString = scriptString + cssScript;
+                }
+                if (customJS !== '' && scriptEnabled === true) {
+                    scriptString = scriptString + customJS;
+                }
+                return item_1.Item.set('prop:BrowserJs', scriptString, _this._id);
+            })
+                .then(function () {
+                return item_1.Item.set('prop:custom', JSON.stringify(customObject), _this._id);
+            })
+                .then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    /**
+     * return: Promise<boolean>
+     *
+     * Gets if custom CSS is enabled and applied to the document on load
+     */
+    HtmlSource.prototype.isCustomCSSEnabled = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:custom', _this._id).then(function (custom) {
+                var enabled = true;
+                try {
+                    var customObject = JSON.parse(custom);
+                    if (customObject.hasOwnProperty('cssEnabled')) {
+                        enabled = (customObject['cssEnabled'] == 'true');
+                    }
+                }
+                catch (e) {
+                }
+                resolve(enabled);
+            });
+        });
+    };
+    /**
+     * param: (value: boolean)
+     * ```
+     * return: Promise<HtmlSource>
+     * ```
+     *
+     * Enables or disables application of custom CSS to the document
+     *
+     * *Chainable.*
+     */
+    HtmlSource.prototype.enableCustomCSS = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            var customObject = {};
+            item_1.Item.get('prop:custom', _this._id).then(function (custom) {
+                var customJS = '';
+                var customCSS = '';
+                var scriptString = ' ';
+                var scriptEnabled = true;
+                var cssEnabled = true;
+                try {
+                    customObject = JSON.parse(custom);
+                    if (customObject.hasOwnProperty('scriptEnabled')) {
+                        scriptEnabled = (customObject['scriptEnabled'] == 'true');
+                    }
+                    if (customObject.hasOwnProperty('customJS')) {
+                        customJS = customObject['customJS'];
+                    }
+                    if (customObject.hasOwnProperty('customCSS')) {
+                        customCSS = customObject['customCSS'];
+                    }
+                }
+                catch (e) {
+                }
+                customObject['scriptEnabled'] = scriptEnabled.toString();
+                customObject['cssEnabled'] = value.toString();
+                customObject['customJS'] = customJS;
+                customObject['customCSS'] = customCSS;
+                if (value === true) {
+                    var cssScript = 'var xjsCSSOverwrite = document.createElement("style");' +
+                        'xjsCSSOverwrite.id = "splitmedialabsCSSOverwrite";' +
+                        'xjsCSSOverwrite.type = "text/css";' +
+                        'var h = document.querySelector("head");' +
+                        'var existing = document' +
+                        '.querySelector("head #splitmedialabsCSSOverwrite");' +
+                        'if (existing != null)h.removeChild(existing);' +
+                        'xjsCSSOverwrite.innerHTML = "' +
+                        customCSS.replace(/(\r\n|\n|\r)/gm, '')
+                            .replace(/\s{2,}/g, ' ').replace(/(\[br\])/gm, '') +
+                        '";h.appendChild(xjsCSSOverwrite);';
+                    scriptString = scriptString + cssScript;
+                }
+                if (customJS !== '' && value === scriptEnabled) {
+                    scriptString = scriptString + customJS;
+                }
+                return item_1.Item.set('prop:BrowserJs', scriptString, _this._id);
+            })
+                .then(function () {
+                return item_1.Item.set('prop:custom', JSON.stringify(customObject), _this._id);
+            })
+                .then(function () {
+                if (!value) {
+                    var cssScript = "var h = document.querySelector('head');var existing3 = document.querySelector('head #splitmedialabsCSSOverwrite');if (existing3 != null)h.removeChild(existing3);";
+                    if (environment_1.Environment.isSourcePlugin()) {
+                        eval(cssScript);
+                    }
+                    else {
+                        internal_1.exec('CallInner', 'eval', cssScript);
+                    }
+                    resolve(_this);
+                }
+                else {
+                    resolve(_this);
+                }
+            });
+        });
+    };
+    /**
+     * return: Promise<boolean>
+     *
+     * Check if browser is rendered transparent
+     */
+    HtmlSource.prototype.isBrowserTransparent = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:BrowserTransparent', _this._id).then(function (isTransparent) {
+                resolve(isTransparent === '1');
+            });
+        });
+    };
+    /**
+     * param: Promise<boolean>
+     * ```
+     * return: Promise<HtmlSource>
+     * ```
+     *
+     * Enable or disabled transparency of CEF browser
+     *
+     * *Chainable.*
+     */
+    HtmlSource.prototype.enableBrowserTransparency = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('prop:BrowserTransparent', (value ? '1' : '0'), _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    /**
+     * return: Promise<Rectangle>
+     *
+     * Gets the custom browser window size (in pixels) for the source, if set,
+     * regardless of its layout on the mixer. Returns a (0, 0) Rectangle if no
+     * custom size has been set.
+     *
+     * See also: {@link #util/Rectangle Util/Rectangle}
+     */
+    HtmlSource.prototype.getBrowserCustomSize = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            var customSize;
+            item_1.Item.get('prop:BrowserSize', _this._id).then(function (val) {
+                if (val !== '') {
+                    var _a = decodeURIComponent(val).split(','), width = _a[0], height = _a[1];
+                    customSize = rectangle_1.Rectangle.fromDimensions(Number(width) / window.devicePixelRatio, Number(height) / window.devicePixelRatio);
+                }
+                else {
+                    customSize = rectangle_1.Rectangle.fromDimensions(0, 0);
+                }
+                resolve(customSize);
+            });
+        });
+    };
+    /**
+     * param: Promise<Rectangle>
+     * ```
+     * return: Promise<HtmlSource>
+     * ```
+     *
+     * Sets the custom browser window size for the source
+     * regardless of its layout on the mixer
+     *
+     * *Chainable.*
+     *
+     * See also: {@link #util/Rectangle Util/Rectangle}
+     */
+    HtmlSource.prototype.setBrowserCustomSize = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            // Set the correct width and height based on the DPI settings
+            value.setWidth(value.getWidth() * window.devicePixelRatio);
+            value.setHeight(value.getHeight() * window.devicePixelRatio);
+            item_1.Item.set('prop:BrowserSize', value.toDimensionString(), _this._id)
+                .then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    return HtmlSource;
+})(source_1.Source);
+exports.HtmlSource = HtmlSource;
+mixin_1.applyMixins(HtmlSource, [ilayout_1.ItemLayout, icolor_1.ItemColor, ichroma_1.ItemChroma, itransition_1.ItemTransition,
+    iconfig_1.ItemConfigurable, iaudio_1.ItemAudio]);
+},{"../../internal/internal":28,"../../internal/item":29,"../../internal/util/mixin":31,"../../util/rectangle":45,"../environment":4,"./iaudio":13,"./ichroma":14,"./icolor":15,"./iconfig":16,"./ilayout":17,"./itransition":20,"./source":23}],13:[function(require,module,exports){
+/// <reference path="../../../defs/es6-promise.d.ts" />
+var item_1 = require('../../internal/item');
+var ItemAudio = (function () {
+    function ItemAudio() {
+    }
+    ItemAudio.prototype.getVolume = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:volume', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    ItemAudio.prototype.setVolume = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            value = value < 0 ? 0 : value > 100 ? 100 : value;
+            item_1.Item.set('prop:volume', String(value), _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    ItemAudio.prototype.isMute = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:mute', _this._id).then(function (val) {
+                resolve(val === '1');
+            });
+        });
+    };
+    ItemAudio.prototype.setMute = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('prop:mute', (value ? '1' : '0'), _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    ItemAudio.prototype.isStreamOnlyAudio = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:sounddev', _this._id).then(function (val) {
+                resolve(val === '1');
+            });
+        });
+    };
+    ItemAudio.prototype.setStreamOnlyAudio = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('prop:sounddev', (value ? '1' : '0'), _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    ItemAudio.prototype.isAudioAvailable = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:audioavail', _this._id).then(function (val) {
+                resolve(val === '1');
+            });
+        });
+    };
+    return ItemAudio;
+})();
+exports.ItemAudio = ItemAudio;
+},{"../../internal/item":29}],14:[function(require,module,exports){
+/// <reference path="../../../defs/es6-promise.d.ts" />
+var item_1 = require('../../internal/item');
+var color_1 = require('../../util/color');
+/**
+ *  Used by sources that implement the Chroma interface.
+ *  Check `getKeyingType()`/`setKeyingType()` method of
+ *  {@link #core/CameraSource#getKeyingType Core/CameraSource},
+ *  {@link #core/GameSource#getKeyingType Core/GameSource}, and
+ *  {@link #core/HtmlSource#getKeyingType Core/HtmlSource}.
+ */
+(function (KeyingType) {
+    KeyingType[KeyingType["LEGACY"] = 0] = "LEGACY";
+    KeyingType[KeyingType["COLORKEY"] = 1] = "COLORKEY";
+    KeyingType[KeyingType["RGBKEY"] = 2] = "RGBKEY"; // Chroma Key RGB Mode
+})(exports.KeyingType || (exports.KeyingType = {}));
+var KeyingType = exports.KeyingType;
+/**
+ *  Used by sources that implement the Chroma interface, when using RGB mode
+ *  Chroma Key.
+ *
+ *  Check `getChromaRGBKeyPrimaryColor()`/`setChromaRGBKeyPrimaryColor()` method
+ *  of {@link #core/CameraSource#getChromaRGBKeyPrimaryColor Core/CameraSource},
+ *  {@link #core/GameSource#getChromaRGBKeyPrimaryColor Core/GameSource}, and
+ *  {@link #core/HtmlSource#getChromaRGBKeyPrimaryColor Core/HtmlSource}.
+ */
+(function (ChromaPrimaryColors) {
+    ChromaPrimaryColors[ChromaPrimaryColors["RED"] = 0] = "RED";
+    ChromaPrimaryColors[ChromaPrimaryColors["GREEN"] = 1] = "GREEN";
+    ChromaPrimaryColors[ChromaPrimaryColors["BLUE"] = 2] = "BLUE";
+})(exports.ChromaPrimaryColors || (exports.ChromaPrimaryColors = {}));
+var ChromaPrimaryColors = exports.ChromaPrimaryColors;
+/**
+ *  Used by sources that implement the Chroma interface.
+ *
+ *  Check `getChromaAntiAliasLevel()`/`setChromaAntiAliasLevel()` method
+ *  of {@link #core/CameraSource#getChromaAntiAliasLevel Core/CameraSource},
+ *  {@link #core/GameSource#getChromaAntiAliasLevel Core/GameSource}, and
+ *  {@link #core/HtmlSource#getChromaAntiAliasLevel Core/HtmlSource}.
+ */
+(function (ChromaAntiAliasLevel) {
+    ChromaAntiAliasLevel[ChromaAntiAliasLevel["NONE"] = 0] = "NONE";
+    ChromaAntiAliasLevel[ChromaAntiAliasLevel["LOW"] = 1] = "LOW";
+    ChromaAntiAliasLevel[ChromaAntiAliasLevel["HIGH"] = 2] = "HIGH";
+})(exports.ChromaAntiAliasLevel || (exports.ChromaAntiAliasLevel = {}));
+var ChromaAntiAliasLevel = exports.ChromaAntiAliasLevel;
+var ItemChroma = (function () {
+    function ItemChroma() {
+    }
+    ItemChroma.prototype.isChromaEnabled = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:key_chromakey', _this._id).then(function (val) {
+                resolve(val === '1');
+            });
+        });
+    };
+    ItemChroma.prototype.setChromaEnabled = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (typeof value !== 'boolean') {
+                reject(TypeError('Parameter should be boolean.'));
+            }
+            else {
+                item_1.Item.set('prop:key_chromakey', (value ? '1' : '0'), _this._id).then(function () {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    ItemChroma.prototype.getKeyingType = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:key_chromakeytype', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    ItemChroma.prototype.setKeyingType = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (typeof value !== 'number') {
+                reject(TypeError('Use a KeyingType value as the parameter.'));
+            }
+            else if (value < 0 || value > 2) {
+                reject(RangeError('Use a KeyingType value as the parameter.'));
+            }
+            else {
+                item_1.Item.set('prop:key_chromakeytype', String(value), _this._id).then(function () {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    ItemChroma.prototype.getChromaAntiAliasLevel = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:key_antialiasing', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    ItemChroma.prototype.setChromaAntiAliasLevel = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (typeof value !== 'number') {
+                reject(TypeError('Use a ChromaAntiAliasLevel value as the parameter.'));
+            }
+            else if (value < 0 || value > 2) {
+                reject(RangeError('Use a ChromaAntiAliasLevel value as the parameter.'));
+            }
+            else {
+                item_1.Item.set('prop:key_antialiasing', String(value), _this._id).then(function () {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    // CHROMA LEGACY MODE FUNCTIONS
+    ItemChroma.prototype.getChromaLegacyBrightness = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:key_chromabr', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    ItemChroma.prototype.setChromaLegacyBrightness = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (typeof value !== 'number') {
+                reject(TypeError('Use an integer as the parameter.'));
+            }
+            else if (value < 0 || value > 255) {
+                reject(RangeError('Valid value is an integer from 0-255.'));
+            }
+            else {
+                item_1.Item.set('prop:key_chromabr', String(value), _this._id).then(function () {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    ItemChroma.prototype.getChromaLegacySaturation = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:key_chromasat', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    ItemChroma.prototype.setChromaLegacySaturation = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (typeof value !== 'number') {
+                reject(TypeError('Use an integer as the parameter.'));
+            }
+            else if (value < 0 || value > 255) {
+                reject(RangeError('Valid value is an integer from 0-255.'));
+            }
+            else {
+                item_1.Item.set('prop:key_chromasat', String(value), _this._id).then(function () {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    ItemChroma.prototype.getChromaLegacyHue = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:key_chromahue', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    ItemChroma.prototype.setChromaLegacyHue = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (typeof value !== 'number') {
+                reject(TypeError('Use an integer as the parameter.'));
+            }
+            else if (value < 0 || value > 180) {
+                reject(RangeError('Valid value is an integer from 0-180.'));
+            }
+            else {
+                item_1.Item.set('prop:key_chromahue', String(value), _this._id).then(function () {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    ItemChroma.prototype.getChromaLegacyThreshold = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:key_chromarang', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    ItemChroma.prototype.setChromaLegacyThreshold = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (typeof value !== 'number') {
+                reject(TypeError('Use an integer as the parameter.'));
+            }
+            else if (value < 0 || value > 255) {
+                reject(RangeError('Valid value is an integer from 0-255.'));
+            }
+            else {
+                item_1.Item.set('prop:key_chromarang', String(value), _this._id).then(function () {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    ItemChroma.prototype.getChromaLegacyAlphaSmoothing = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:key_chromaranga', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    ItemChroma.prototype.setChromaLegacyAlphaSmoothing = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (typeof value !== 'number') {
+                reject(TypeError('Use an integer as the parameter.'));
+            }
+            else if (value < 0 || value > 255) {
+                reject(RangeError('Valid value is an integer from 0-255.'));
+            }
+            else {
+                item_1.Item.set('prop:key_chromaranga', String(value), _this._id).then(function () {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    // CHROMA RGB KEY FUNCTIONS
+    ItemChroma.prototype.getChromaRGBKeyPrimaryColor = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:key_chromargbkeyprimary', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    ItemChroma.prototype.setChromaRGBKeyPrimaryColor = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (typeof value !== 'number') {
+                reject(TypeError('Use a ChromaPrimaryColors value as the parameter.'));
+            }
+            else if (value < 0 || value > 2) {
+                reject(RangeError('Use a ChromaPrimaryColors value as the parameter.'));
+            }
+            else {
+                item_1.Item.set('prop:key_chromargbkeyprimary', String(value), _this._id)
+                    .then(function () {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    ItemChroma.prototype.getChromaRGBKeyThreshold = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:key_chromargbkeythresh', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    ItemChroma.prototype.setChromaRGBKeyThreshold = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (typeof value !== 'number') {
+                reject(TypeError('Use an integer as the parameter.'));
+            }
+            else if (value < 0 || value > 255) {
+                reject(RangeError('Valid value is an integer from 0-255.'));
+            }
+            else {
+                item_1.Item.set('prop:key_chromargbkeythresh', String(value), _this._id)
+                    .then(function () {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    ItemChroma.prototype.getChromaRGBKeyExposure = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:key_chromargbkeybalance', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    ItemChroma.prototype.setChromaRGBKeyExposure = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (typeof value !== 'number') {
+                reject(TypeError('Use an integer as the parameter.'));
+            }
+            else if (value < 0 || value > 255) {
+                reject(RangeError('Valid value is an integer from 0-255.'));
+            }
+            else {
+                item_1.Item.set('prop:key_chromargbkeybalance', String(value), _this._id)
+                    .then(function () {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    // CHROMA COLOR KEY FUNCTIONS
+    ItemChroma.prototype.getChromaColorKeyThreshold = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:key_colorrang', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    ItemChroma.prototype.setChromaColorKeyThreshold = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (typeof value !== 'number') {
+                reject(TypeError('Use an integer as the parameter.'));
+            }
+            else if (value < 0 || value > 255) {
+                reject(RangeError('Valid value is an integer from 0-255.'));
+            }
+            else {
+                item_1.Item.set('prop:key_colorrang', String(value), _this._id).then(function () {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    ItemChroma.prototype.getChromaColorKeyExposure = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:key_colorranga', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    ItemChroma.prototype.setChromaColorKeyExposure = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (typeof value !== 'number') {
+                reject(TypeError('Use an integer as the parameter.'));
+            }
+            else if (value < 0 || value > 255) {
+                reject(RangeError('Valid value is an integer from 0-255.'));
+            }
+            else {
+                item_1.Item.set('prop:key_colorranga', String(value), _this._id).then(function () {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    ItemChroma.prototype.getChromaColorKeyColor = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:key_colorrgb', _this._id).then(function (val) {
+                var color = color_1.Color.fromBGRString(val);
+                resolve(color);
+            });
+        });
+    };
+    ItemChroma.prototype.setChromaColorKeyColor = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('prop:key_colorrgb', String(value.getIbgr()), _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    return ItemChroma;
+})();
+exports.ItemChroma = ItemChroma;
+},{"../../internal/item":29,"../../util/color":41}],15:[function(require,module,exports){
+/// <reference path="../../../defs/es6-promise.d.ts" />
+var item_1 = require('../../internal/item');
+var color_1 = require('../../util/color');
+var ItemColor = (function () {
+    function ItemColor() {
+    }
+    ItemColor.prototype.getTransparency = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:alpha', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    ItemColor.prototype.setTransparency = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (value < 0 || value > 255) {
+                reject(RangeError('Transparency may only be in the range 0 to 255.'));
+            }
+            else {
+                item_1.Item.set('prop:alpha', String(value), _this._id).then(function () {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    ItemColor.prototype.getBrightness = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:cc_brightness', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    ItemColor.prototype.setBrightness = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (value < -100 || value > 100) {
+                reject(RangeError('Brightness may only be in the range -100 to 100.'));
+            }
+            else {
+                item_1.Item.set('prop:cc_brightness', String(value), _this._id).then(function () {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    ItemColor.prototype.getContrast = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:cc_contrast', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    ItemColor.prototype.setContrast = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (value < -100 || value > 100) {
+                reject(RangeError('Contrast may only be in the range -100 to 100.'));
+            }
+            else {
+                item_1.Item.set('prop:cc_contrast', String(value), _this._id).then(function () {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    ItemColor.prototype.getHue = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:cc_hue', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    ItemColor.prototype.setHue = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (value < -180 || value > 180) {
+                reject(RangeError('Contrast may only be in the range -180 to 180.'));
+            }
+            else {
+                item_1.Item.set('prop:cc_hue', String(value), _this._id).then(function () {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    ItemColor.prototype.getSaturation = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:cc_saturation', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    ItemColor.prototype.setSaturation = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (value < -100 || value > 100) {
+                reject(RangeError('Saturation may only be in the range -100 to 100'));
+            }
+            else {
+                item_1.Item.set('prop:cc_saturation', String(value), _this._id).then(function () {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    ItemColor.prototype.getBorderColor = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:border', _this._id).then(function (val) {
+                var bgr = Number(val) - 0x80000000;
+                var color = color_1.Color.fromBGRInt(bgr);
+                resolve(color);
+            });
+        });
+    };
+    ItemColor.prototype.setBorderColor = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            item_1.Item.set('prop:border', String(value.getIbgr() - 0x80000000), _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    return ItemColor;
+})();
+exports.ItemColor = ItemColor;
+},{"../../internal/item":29,"../../util/color":41}],16:[function(require,module,exports){
+/// <reference path="../../../defs/es6-promise.d.ts" />
+var item_1 = require('../../internal/item');
+var global_1 = require('../../internal/global');
+var internal_1 = require('../../internal/internal');
+var environment_1 = require('../environment');
+var ItemConfigurable = (function () {
+    function ItemConfigurable() {
+    }
+    ItemConfigurable.prototype.loadConfig = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:BrowserConfiguration', _this._id).then(function (config) {
+                var configObj = config === 'null' ? {} : JSON.parse(config);
+                var persist = global_1.Global.getPersistentConfig();
+                for (var key in persist) {
+                    delete configObj[key];
+                }
+                resolve(configObj);
+            });
+        });
+    };
+    ItemConfigurable.prototype.saveConfig = function (configObj) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (environment_1.Environment.isSourcePlugin) {
+                var slot = item_1.Item.attach(_this._id);
+                // only allow direct saving for self
+                if (slot === 0) {
+                    // check for valid object
+                    if ({}.toString.call(configObj) === '[object Object]') {
+                        // add persisted configuration if available
+                        // currently only top level merging is available
+                        var persist = global_1.Global.getPersistentConfig();
+                        for (var key in persist) {
+                            configObj[key] = persist[key];
+                        }
+                        internal_1.exec('SetBrowserProperty', 'Configuration', JSON.stringify(configObj));
+                        resolve(_this);
+                    }
+                    else {
+                        reject(Error('Configuration object should be ' +
+                            'in JSON format.'));
+                    }
+                }
+                else {
+                    reject(Error('Sources may only request other ' +
+                        'sources to save a configuration. Consider ' +
+                        'calling requestSaveConfig() on this Item ' +
+                        'instance instead.'));
+                }
+            }
+            else {
+                reject(Error('Extensions and source properties windows are ' +
+                    'not allowed to directly save configuration objects. ' +
+                    'Call requestSaveConfig() instead.'));
+            }
+        });
+    };
+    ItemConfigurable.prototype.requestSaveConfig = function (configObj) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            var slot = item_1.Item.attach(_this._id);
+            internal_1.exec('CallInner' + (slot === 0 ? '' : (slot + 1)), 'MessageSource', JSON.stringify({
+                'request': 'saveConfig',
+                'data': configObj
+            }));
+            resolve(_this);
+        });
+    };
+    ItemConfigurable.prototype.applyConfig = function (configObj) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            var slot = item_1.Item.attach(_this._id);
+            internal_1.exec('CallInner' + (slot === 0 ? '' : (slot + 1)), 'MessageSource', JSON.stringify({
+                'request': 'applyConfig',
+                'data': configObj
+            }));
+            resolve(_this);
+        });
+    };
+    return ItemConfigurable;
+})();
+exports.ItemConfigurable = ItemConfigurable;
+},{"../../internal/global":26,"../../internal/internal":28,"../../internal/item":29,"../environment":4}],17:[function(require,module,exports){
+/// <reference path="../../../defs/es6-promise.d.ts" />
+var item_1 = require('../../internal/item');
+var rectangle_1 = require('../../util/rectangle');
+var ItemLayout = (function () {
+    function ItemLayout() {
+    }
+    ItemLayout.prototype.isKeepAspectRatio = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:keep_ar', _this._id).then(function (val) {
+                resolve(val === '1');
+            });
+        });
+    };
+    ItemLayout.prototype.setKeepAspectRatio = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('prop:keep_ar', value ? '1' : '0', _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    ItemLayout.prototype.isPositionLocked = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:lockmove', _this._id).then(function (val) {
+                resolve(val === '1');
+            });
+        });
+    };
+    ItemLayout.prototype.setPositionLocked = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('prop:lockmove', value ? '1' : '0', _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    ItemLayout.prototype.isEnhancedResizeEnabled = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:mipmaps', _this._id).then(function (val) {
+                resolve(val === '1');
+            });
+        });
+    };
+    ItemLayout.prototype.setEnhancedResizeEnabled = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('prop:mipmaps', value ? '1' : '0', _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    ItemLayout.prototype.getPosition = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:pos', _this._id).then(function (val) {
+                var _a = decodeURIComponent(val).split(','), left = _a[0], top = _a[1], right = _a[2], bottom = _a[3];
+                _this.position = rectangle_1.Rectangle.fromCoordinates(Number(left), Number(top), Number(right), Number(bottom));
+                resolve(_this.position);
+            });
+        });
+    };
+    ItemLayout.prototype.setPosition = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            _this.position = value;
+            item_1.Item.set('prop:pos', value.toCoordinateString(), _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    ItemLayout.prototype.getRotateY = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:rotate_y', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    ItemLayout.prototype.setRotateY = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (value < -360 || value > 360) {
+                reject(Error('Invalid value. Min: -360, Max: 360'));
+            }
+            else {
+                item_1.Item.set('prop:rotate_y', String(value), _this._id).then(function () {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    ItemLayout.prototype.getRotateX = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:rotate_x', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    ItemLayout.prototype.setRotateX = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (value < -360 || value > 360) {
+                reject(Error('Invalid value. Min: -360, Max: 360'));
+            }
+            else {
+                item_1.Item.set('prop:rotate_x', String(value), _this._id).then(function () {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    ItemLayout.prototype.getRotateZ = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:rotate_z', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    ItemLayout.prototype.setRotateZ = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (value < -360 || value > 360) {
+                reject(Error('Invalid value. Min: -360, Max: 360'));
+            }
+            else {
+                item_1.Item.set('prop:rotate_z', String(value), _this._id).then(function () {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    return ItemLayout;
+})();
+exports.ItemLayout = ItemLayout;
+},{"../../internal/item":29,"../../util/rectangle":45}],18:[function(require,module,exports){
+/// <reference path="../../../defs/es6-promise.d.ts" />
+var __extends = (this && this.__extends) || function (d, b) {
+    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+    function __() { this.constructor = d; }
+    __.prototype = b.prototype;
+    d.prototype = new __();
+};
+var mixin_1 = require('../../internal/util/mixin');
+var ilayout_1 = require('./ilayout');
+var icolor_1 = require('./icolor');
+var ichroma_1 = require('./ichroma');
+var itransition_1 = require('./itransition');
+var source_1 = require('./source');
+/**
+ * The ImageSource class represents an image source (includes GIF files).
+ *
+ * Inherits from: {@link #core/Source Core/Source}
+ *
+ * Implements: {@link #core/IItemChroma Core/IItemChroma},
+ * {@link #core/IItemColor Core/IItemColor},
+ * {@link #core/IItemLayout Core/IItemLayout},
+ * {@link #core/IItemTransition Core/IItemTransition}
+ *
+ *  All methods marked as *Chainable* resolve with the original `ImageSource`
+ *  instance.
+ */
+var ImageSource = (function (_super) {
+    __extends(ImageSource, _super);
+    function ImageSource() {
+        _super.apply(this, arguments);
+    }
+    return ImageSource;
+})(source_1.Source);
+exports.ImageSource = ImageSource;
+mixin_1.applyMixins(ImageSource, [ilayout_1.ItemLayout, icolor_1.ItemColor, ichroma_1.ItemChroma, itransition_1.ItemTransition]);
+},{"../../internal/util/mixin":31,"./ichroma":14,"./icolor":15,"./ilayout":17,"./itransition":20,"./source":23}],19:[function(require,module,exports){
+/// <reference path="../../../defs/es6-promise.d.ts" />
+var item_1 = require('../../internal/item');
+var cuepoint_1 = require('./cuepoint');
+/**
+ *  Used by sources that implement the Playback interface.
+ *  Check `getActionAfterPlayback()`/`setActionAfterPlayback()` method of
+ *  {@link #core/MediaSource#getActionAfterPlayback Core/MediaSource}.
+ */
+(function (ActionAfterPlayback) {
+    ActionAfterPlayback[ActionAfterPlayback["NONE"] = 0] = "NONE";
+    ActionAfterPlayback[ActionAfterPlayback["REWIND"] = 1] = "REWIND";
+    ActionAfterPlayback[ActionAfterPlayback["LOOP"] = 2] = "LOOP";
+    ActionAfterPlayback[ActionAfterPlayback["TRANSPARENT"] = 3] = "TRANSPARENT";
+    ActionAfterPlayback[ActionAfterPlayback["HIDE"] = 4] = "HIDE";
+})(exports.ActionAfterPlayback || (exports.ActionAfterPlayback = {}));
+var ActionAfterPlayback = exports.ActionAfterPlayback;
+var AUDIO_REGEX = /\.(mp3|aac|cda|ogg|m4a|flac|wma|aiff|aif|wav|mid|midi|rma)$/;
+var VIDEO_REGEX = /\.(avi|flv|mkv|mp4|mpg|wmv|3gp|3g2|asf|f4v|mov|mpeg|vob|webm)$/;
+var ItemPlayback = (function () {
+    function ItemPlayback() {
+    }
+    ItemPlayback.prototype.isSeekable = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('sync:syncable', _this._id).then(function (val) {
+                resolve(val === '1' ? true : false);
+            });
+        });
+    };
+    ItemPlayback.prototype.getPlaybackPosition = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('sync:position', _this._id).then(function (val) {
+                resolve(Number(val) / 10000000);
+            });
+        });
+    };
+    ItemPlayback.prototype.setPlaybackPosition = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('sync:position', String(value * 10000000), _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    ItemPlayback.prototype.getPlaybackDuration = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('sync:duration', _this._id).then(function (val) {
+                resolve(Number(val) / 10000000);
+            });
+        });
+    };
+    ItemPlayback.prototype.isPlaying = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('sync:state', _this._id).then(function (val) {
+                resolve(val === "running");
+            });
+        });
+    };
+    ItemPlayback.prototype.setPlaying = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('sync:state', value ? "running" : "stopped", _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    ItemPlayback.prototype.getPlaybackStartPosition = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:InPoint', _this._id).then(function (val) {
+                resolve(Number(val) / 10000000);
+            });
+        });
+    };
+    ItemPlayback.prototype.setPlaybackStartPosition = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('prop:InPoint', String(value * 10000000), _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    ItemPlayback.prototype.getPlaybackEndPosition = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:OutPoint', _this._id).then(function (val) {
+                resolve(Number(val) / 10000000);
+            });
+        });
+    };
+    ItemPlayback.prototype.setPlaybackEndPosition = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('prop:OutPoint', String(value * 10000000), _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    ItemPlayback.prototype.getActionAfterPlayback = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:OpWhenFinished', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    ItemPlayback.prototype.setActionAfterPlayback = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('prop:OpWhenFinished', String(value), _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    ItemPlayback.prototype.isAutostartOnSceneLoad = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:StartOnLoad', _this._id).then(function (val) {
+                resolve(val === '1');
+            });
+        });
+    };
+    ItemPlayback.prototype.setAutostartOnSceneLoad = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('prop:StartOnLoad', (value ? '1' : '0'), _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    ItemPlayback.prototype.isForceDeinterlace = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:fdeinterlace', _this._id).then(function (val) {
+                resolve(val === '1');
+            });
+        });
+    };
+    ItemPlayback.prototype.setForceDeinterlace = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('prop:fdeinterlace', (value ? '1' : '0'), _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    ItemPlayback.prototype.isRememberingPlaybackPosition = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:RememberPosition', _this._id).then(function (val) {
+                resolve(val === '1');
+            });
+        });
+    };
+    ItemPlayback.prototype.setRememberingPlaybackPosition = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('prop:RememberPosition', (value ? '1' : '0'), _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    ItemPlayback.prototype.isShowingPlaybackPosition = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:ShowPosition', _this._id).then(function (val) {
+                resolve(val === '1');
+            });
+        });
+    };
+    ItemPlayback.prototype.setShowingPlaybackPosition = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('prop:ShowPosition', (value ? '1' : '0'), _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    ItemPlayback.prototype.getCuePoints = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:CuePoints', _this._id).then(function (cuePointString) {
+                if (cuePointString === '') {
+                    resolve([]);
+                }
+                else {
+                    var cuePointStrings = cuePointString.split(',');
+                    var cuePoints = cuePointStrings.map(function (string) { return cuepoint_1.CuePoint._fromString(string); });
+                    resolve(cuePoints);
+                }
+            });
+        });
+    };
+    ItemPlayback.prototype.setCuePoints = function (cuePoints) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            var cuePointString = cuePoints.map(function (point) { return point.toString(); }).join(',');
+            resolve(_this);
+        });
+    };
+    ItemPlayback.prototype.isAudio = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:item', _this._id).then(function (filename) {
+                resolve(AUDIO_REGEX.test(filename));
+            });
+        });
+    };
+    ItemPlayback.prototype.isVideo = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:item', _this._id).then(function (filename) {
+                resolve(VIDEO_REGEX.test(filename));
+            });
+        });
+    };
+    ItemPlayback.prototype.getValue = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            // we do not do any additional checking since we are assured of the type
+            item_1.Item.get('prop:item', _this._id).then(function (val) {
+                resolve(val);
+            });
+        });
+    };
+    ;
+    ItemPlayback.prototype.setValue = function (filename) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (VIDEO_REGEX.test(filename) || AUDIO_REGEX.test(filename)) {
+                item_1.Item.set('prop:item', filename, _this._id)
+                    .then(function () { return item_1.Item.set('prop:name', filename, _this._id); })
+                    .then(function () { return item_1.Item.set('prop:CuePoints', '', _this._id); })
+                    .then(function () {
+                    resolve(_this);
+                });
+            }
+            else {
+                reject(new Error('You can only set the value to a valid media type'));
+            }
+        });
+    };
+    return ItemPlayback;
+})();
+exports.ItemPlayback = ItemPlayback;
+},{"../../internal/item":29,"./cuepoint":9}],20:[function(require,module,exports){
+/// <reference path="../../../defs/es6-promise.d.ts" />
+var item_1 = require('../../internal/item');
+var transition_1 = require('../transition');
+var ItemTransition = (function () {
+    function ItemTransition() {
+    }
+    ItemTransition.prototype.isVisible = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:visible', _this._id).then(function (val) {
+                resolve(val === '1' ? true : false);
+            });
+        });
+    };
+    ItemTransition.prototype.setVisible = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('prop:visible', value ? '1' : '0', _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    ItemTransition.prototype.getTransition = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:transitionid', _this._id).then(function (val) {
+                if (val === '') {
+                    resolve(transition_1.Transition.NONE);
+                }
+                else {
+                    resolve(transition_1.Transition[val.toUpperCase()]);
+                }
+            });
+        });
+    };
+    ItemTransition.prototype.setTransition = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('prop:transitionid', value.toString(), _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    ItemTransition.prototype.getTransitionTime = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:transitiontime', _this._id).then(function (val) {
+                resolve(Number(val));
+            });
+        });
+    };
+    ItemTransition.prototype.setTransitionTime = function (value) {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (value < 0 || value > 60000) {
+                reject(RangeError('Transparency may only be in the range 0 to 60000.'));
+            }
+            else {
+                item_1.Item.set('prop:transitiontime', String(value), _this._id).then(function () {
+                    resolve(_this);
+                });
+            }
+        });
+    };
+    return ItemTransition;
+})();
+exports.ItemTransition = ItemTransition;
+},{"../../internal/item":29,"../transition":24}],21:[function(require,module,exports){
+/// <reference path="../../../defs/es6-promise.d.ts" />
+var __extends = (this && this.__extends) || function (d, b) {
+    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+    function __() { this.constructor = d; }
+    __.prototype = b.prototype;
+    d.prototype = new __();
+};
+var mixin_1 = require('../../internal/util/mixin');
+var ilayout_1 = require('./ilayout');
+var icolor_1 = require('./icolor');
+var ichroma_1 = require('./ichroma');
+var itransition_1 = require('./itransition');
+var iplayback_1 = require('./iplayback');
+var iaudio_1 = require('./iaudio');
+var source_1 = require('./source');
+/**
+ * The MediaSource class represents a playable media file.
+ *
+ * Inherits from: {@link #core/Source Core/Source}
+ *
+ * Implements: {@link #core/IItemChroma Core/IItemChroma},
+ * {@link #core/IItemColor Core/IItemColor},
+ * {@link #core/IItemLayout Core/IItemLayout},
+ * {@link #core/IItemTransition Core/IItemTransition},
+ * {@link #core/IItemAudio Core/IItemAudio},
+ * {@link #core/IItemPlayback Core/IItemPlayback}
+ *
+ *  All methods marked as *Chainable* resolve with the original `MediaSource`
+ *  instance.
+ */
+var MediaSource = (function (_super) {
+    __extends(MediaSource, _super);
+    function MediaSource() {
+        _super.apply(this, arguments);
+    }
+    return MediaSource;
+})(source_1.Source);
+exports.MediaSource = MediaSource;
+mixin_1.applyMixins(MediaSource, [ilayout_1.ItemLayout, icolor_1.ItemColor, ichroma_1.ItemChroma,
+    itransition_1.ItemTransition, iplayback_1.ItemPlayback, iaudio_1.ItemAudio]);
+},{"../../internal/util/mixin":31,"./iaudio":13,"./ichroma":14,"./icolor":15,"./ilayout":17,"./iplayback":19,"./itransition":20,"./source":23}],22:[function(require,module,exports){
+/// <reference path="../../../defs/es6-promise.d.ts" />
+var __extends = (this && this.__extends) || function (d, b) {
+    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+    function __() { this.constructor = d; }
+    __.prototype = b.prototype;
+    d.prototype = new __();
+};
+var mixin_1 = require('../../internal/util/mixin');
+var item_1 = require('../../internal/item');
+var ilayout_1 = require('./ilayout');
+var icolor_1 = require('./icolor');
+var ichroma_1 = require('./ichroma');
+var itransition_1 = require('./itransition');
+var source_1 = require('./source');
+var rectangle_1 = require('../../util/rectangle');
+var json_1 = require('../../internal/util/json');
+var xml_1 = require('../../internal/util/xml');
+/**
+ * The ScreenSource class represents a screen capture source.
+ *
+ * Inherits from: {@link #core/Source Core/Source}
+ *
+ * Implements: {@link #core/IItemChroma Core/IItemChroma},
+ * {@link #core/IItemColor Core/IItemColor},
+ * {@link #core/IItemLayout Core/IItemLayout},
+ * {@link #core/IItemTransition Core/IItemTransition}
+ *
+ *  All methods marked as *Chainable* resolve with the original `ScreenSource`
+ *  instance.
+ */
+var ScreenSource = (function (_super) {
+    __extends(ScreenSource, _super);
+    function ScreenSource() {
+        _super.apply(this, arguments);
+    }
+    /**
+     * return: Promise<Rectangle>
+     *
+     * Gets the Capture Area of the Screen Capture Source. Returns a Rectangle
+     * object.
+     *
+     * See also: {@link #util/Rectangle Util/Rectangle}
+     */
+    ScreenSource.prototype.getCaptureArea = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            _this.getValue().then(function (val) {
+                if (!(val instanceof xml_1.XML)) {
+                    resolve(rectangle_1.Rectangle.fromCoordinates(0, 0, 0, 0));
+                }
+                else {
+                    var _value = json_1.JSON.parse(val);
+                    resolve(rectangle_1.Rectangle.fromCoordinates(Number(_value['left']), Number(_value['top']), Number(_value['width']) + Number(_value['left']), Number(_value['height']) + Number(_value['top'])));
+                }
+            });
+        });
+    };
+    /**
+     * param: Promise<Rectangle>
+     * ```
+     * return: Promise<ScreenSource>
+     * ```
+     *
+     * Sets the Window Capture Area of the Screen Capture Source.
+     *
+     * *Chainable.*
+     *
+     * See also: {@link #util/Rectangle Util/Rectangle}
+     */
+    ScreenSource.prototype.setCaptureArea = function (dimension) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            _this.getValue().then(function (val) {
+                return new Promise(function (iResolve) {
+                    item_1.Item.get('screenresolution', _this._id).then(function (res) {
+                        var _res = res.split(',');
+                        iResolve({
+                            value: val,
+                            res: rectangle_1.Rectangle.fromCoordinates(Number(_res[0]), Number(_res[1]), Number(_res[2]), Number(_res[3]))
+                        });
+                    });
+                });
+            }).then(function (obj) {
+                var _config = new json_1.JSON();
+                if (!(obj.value instanceof xml_1.XML)) {
+                    _config['tag'] = 'screen';
+                    _config['module'] = '';
+                    _config['window'] = '';
+                    _config['hwnd'] = '0';
+                    _config['wclient'] = '0';
+                    _config['left'] = '0';
+                    _config['top'] = '0';
+                    _config['width'] = '0';
+                    _config['height'] = '0';
+                }
+                else {
+                    _config = json_1.JSON.parse(obj.value);
+                }
+                _config['left'] = dimension.getLeft() >= obj.res.getLeft() ?
+                    dimension.getLeft() : Number(_config['left']) >= obj.res.getLeft() ?
+                    _config['left'] : obj.res.getLeft();
+                _config['top'] = dimension.getTop() >= obj.res.getTop() ?
+                    dimension.getTop() : Number(_config['top']) >= obj.res.getTop() ?
+                    _config['top'] : obj.res.getTop();
+                _config['width'] = dimension.getWidth() <= obj.res.getWidth() ?
+                    dimension.getWidth() : Number(_config['width']) <=
+                    obj.res.getWidth() ? _config['width'] : obj.res.getWidth();
+                _config['height'] = dimension.getHeight() <= obj.res.getHeight() ?
+                    dimension.getHeight() : Number(_config['height']) <=
+                    obj.res.getHeight() ? _config['height'] : obj.res.getHeight();
+                _this.setValue(xml_1.XML.parseJSON(_config)).then(function () {
+                    resolve(_this);
+                });
+            });
+        });
+    };
+    /**
+     * return: Promise<boolean>
+     *
+     * Checks if the Screen Capture Source only captures the
+     * Client area (does not capture the title bar, menu bar, window border, etc.)
+     */
+    ScreenSource.prototype.isClientArea = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            _this.getValue().then(function (val) {
+                if (!(val instanceof xml_1.XML)) {
+                    resolve(false);
+                }
+                else {
+                    var _value = json_1.JSON.parse(val);
+                    resolve(_value['wclient'] === '1');
+                }
+            });
+        });
+    };
+    /**
+     * param: Promise<boolean>
+     * ```
+     * return: Promise<ScreenSource>
+     * ```
+     *
+     * Set the Screen Capture to capture the Client area only or include
+     * the titlebar, menu bar, window border, etc.
+     */
+    ScreenSource.prototype.setClientArea = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            _this.getValue().then(function (val) {
+                var _config = new json_1.JSON();
+                if (!(val instanceof xml_1.XML)) {
+                    _config['tag'] = 'screen';
+                    _config['module'] = '';
+                    _config['window'] = '';
+                    _config['hwnd'] = '0';
+                    _config['wclient'] = '0';
+                    _config['left'] = '0';
+                    _config['top'] = '0';
+                    _config['width'] = '0';
+                    _config['height'] = '0';
+                }
+                else {
+                    _config = json_1.JSON.parse(val);
+                }
+                _config['wclient'] = (value ? '1' : '0');
+                _this.setValue(xml_1.XML.parseJSON(_config)).then(function () {
+                    resolve(_this);
+                });
+            });
+        });
+    };
+    /**
+     * return: Promise<boolean>
+     *
+     * Checks if the Screen Capture Source captures a window based on
+     * the window's title.
+     */
+    ScreenSource.prototype.isStickToTitle = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:ScrCapTrackWindowTitle', _this._id).then(function (val) {
+                resolve(val === '0');
+            });
+        });
+    };
+    /**
+     * param: Promise<boolean>
+     * ```
+     * return: Promise<ScreenSource>
+     * ```
+     *
+     * Set the Screen Capture to capture the window based on the window title.
+     * Useful when capturing programs with multiple tabs, for you to only
+     * capture a particular tab.
+     */
+    ScreenSource.prototype.setStickToTitle = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('prop:ScrCapTrackWindowTitle', value ? '0' : '1', _this._id)
+                .then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    return ScreenSource;
+})(source_1.Source);
+exports.ScreenSource = ScreenSource;
+mixin_1.applyMixins(ScreenSource, [ilayout_1.ItemLayout, icolor_1.ItemColor, ichroma_1.ItemChroma, itransition_1.ItemTransition]);
+},{"../../internal/item":29,"../../internal/util/json":30,"../../internal/util/mixin":31,"../../internal/util/xml":32,"../../util/rectangle":45,"./ichroma":14,"./icolor":15,"./ilayout":17,"./itransition":20,"./source":23}],23:[function(require,module,exports){
+/// <reference path="../../../defs/es6-promise.d.ts" />
+var mixin_1 = require('../../internal/util/mixin');
+var item_1 = require('../../internal/item');
+var environment_1 = require('../environment');
+var json_1 = require('../../internal/util/json');
+var xml_1 = require('../../internal/util/xml');
+var scene_1 = require('../scene');
+var ilayout_1 = require('./ilayout');
+(function (SourceTypes) {
+    SourceTypes[SourceTypes["UNDEFINED"] = 0] = "UNDEFINED";
+    SourceTypes[SourceTypes["FILE"] = 1] = "FILE";
+    SourceTypes[SourceTypes["LIVE"] = 2] = "LIVE";
+    SourceTypes[SourceTypes["TEXT"] = 3] = "TEXT";
+    SourceTypes[SourceTypes["BITMAP"] = 4] = "BITMAP";
+    SourceTypes[SourceTypes["SCREEN"] = 5] = "SCREEN";
+    SourceTypes[SourceTypes["FLASHFILE"] = 6] = "FLASHFILE";
+    SourceTypes[SourceTypes["GAMESOURCE"] = 7] = "GAMESOURCE";
+    SourceTypes[SourceTypes["HTML"] = 8] = "HTML";
+})(exports.SourceTypes || (exports.SourceTypes = {}));
+var SourceTypes = exports.SourceTypes;
+/**
+ * A `Source` represents an object that is used as a source on the stage.
+ * Some possible sources are games, microphones, or a webpage.
+ *
+ * Implements: {@link #core/IItemLayout Core/IItemLayout}
+ *
+ * ### Basic Usage
+ *
+ * ```javascript
+ * var xjs = require('xjs');
+ * var Scene = xjs.Scene.getById(0);
+ *
+ * Scene.getSources().then(function(sources) {
+ *   if (sources.length === 0) return;
+ *
+ *   // There's a valid source, let's use that
+ *   var source = sources[sources.length - 1];
+ *   return source.setCustomName('SourceTesting');
+ * }).then(function(source) {
+ *   // Do something else here
+ * });
+ * ```
+ * All methods marked as *Chainable* resolve with the original `Source` instance.
+ * This allows you to perform sequential operations correctly:
+ * ```javascript
+ * var xjs = require('xjs');
+ * var Source = xjs.Source;
+ *
+ * // a source that sets its own properties on load
+ * xjs.ready()
+ *    .then(Source.getCurrentSource)
+ *    .then(function(source) {
+ *     return source.setCustomName('MyCustomName');
+ *  }).then(function(source) {
+ *     return source.setKeepLoaded(true);
+ *  }).then(function(source) {
+ *     // set more properties here
+ *  });
+ * ```
+ */
+var Source = (function () {
+    function Source(props) {
+        props = props ? props : {};
+        this._name = props['name'];
+        this._cname = props['cname'];
+        this._id = props['id'];
+        this._sceneId = props['sceneId'];
+        this._value = props['value'];
+        this._keepLoaded = props['keeploaded'];
+        this._type = Number(props['type']);
+        this._xmlparams = props;
+    }
+    /**
+     * param: (value: string)
+     * ```
+     * return: Promise<Source>
+     * ```
+     *
+     * Sets the name of the source.
+     *
+     * *Chainable.*
+     *
+     * #### Usage
+     *
+     * ```javascript
+     * source.setName('newNameHere').then(function(source) {
+     *   // Promise resolves with same Source instance when name has been set
+     *   return source.getName();
+     * }).then(function(name) {
+     *   // 'name' should be the updated value by now.
+     * });
+     * ```
+     */
+    Source.prototype.setName = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            _this._name = value;
+            item_1.Item.set('prop:name', _this._name, _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    /**
+     * return: Promise<string>
+     *
+     * Gets the name of the source.
+     *
+     * #### Usage
+     *
+     * ```javascript
+     * source.getName().then(function(name) {
+     *   // Do something with the name
+     * });
+     * ```
+     */
+    Source.prototype.getName = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:name', _this._id).then(function (val) {
+                _this._name = val;
+                resolve(val);
+            });
+        });
+    };
+    /**
+     * param: (value: string)
+     * ```
+     * return: Promise<Source>
+     * ```
+     *
+     * Sets the custom name of the source.
+     *
+     * The main difference between `setName` and `setCustomName` is that the CustomName
+     * can be edited by users using XBC through the bottom panel. `setName` on
+     * the other hand would update the source's internal name property.
+     *
+     * *Chainable.*
+     *
+     * #### Usage
+     *
+     * ```javascript
+     * source.setCustomName('newNameHere').then(function(source) {
+     *   // Promise resolves with same Source instance when custom name has been set
+     *   return source.getCustomName();
+     * }).then(function(name) {
+     *   // 'name' should be the updated value by now.
+     * });
+     * ```
+     */
+    Source.prototype.setCustomName = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            _this._cname = value;
+            item_1.Item.set('prop:cname', _this._cname, _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    /**
+     * return: Promise<string>
+     *
+     * Gets the custom name of the source.
+     *
+     * #### Usage
+     *
+     * ```javascript
+     * source.getCustomName().then(function(name) {
+     *   // Do something with the name
+     * });
+     * ```
+     */
+    Source.prototype.getCustomName = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:cname', _this._id).then(function (val) {
+                _this._cname = val;
+                resolve(val);
+            });
+        });
+    };
+    /**
+     * return: Promise<string|XML>
+     *
+     * Gets a special string that refers to the source's main definition.
+     *
+     * This method can resolve with an XML object, which is an object generated by
+     * the framework. Call `toString()` to transform into an XML String. (See the
+     * documentation for `setValue` for more details.)
+     *
+     * #### Usage
+     *
+     * ```javascript
+     * source.getValue().then(function(value) {
+     *   // Do something with the value
+     * });
+     * ```
+     */
+    Source.prototype.getValue = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:item', _this._id).then(function (val) {
+                val = (val === 'null') ? '' : val;
+                if (val === '') {
+                    _this._value = '';
+                    resolve(val);
+                }
+                else {
+                    try {
+                        _this._value = xml_1.XML.parseJSON(json_1.JSON.parse(val));
+                        resolve(_this._value);
+                    }
+                    catch (e) {
+                        // value is not valid XML (it is a string instead)
+                        _this._value = val;
+                        resolve(val);
+                    }
+                }
+            });
+        });
+    };
+    /**
+     * param: (value: string)
+     * ```
+     * return: Promise<Source>
+     * ```
+     *
+     * Set the source's main definition; this special string defines the source's
+     * "identity". Each type of source requires a different format for this value.
+     *
+     * *Chainable.*
+     *
+     * **WARNING:**
+     * Please do note that using this method COULD break the current source, possibly modifying
+     * its type IF you set an invalid string for the current source.
+     *
+     * #### Possible values by source type
+     * - FILE - path/URL
+     * - LIVE - Device ID
+     * - BITMAP - path
+     * - SCREEN - XML string
+     * - FLASHFILE - path
+     * - GAMESOURCE - XML string
+     * - HTML - path/URL or html:<plugin>
+     *
+     * #### Usage
+     *
+     * ```javascript
+     * source.setValue('@DEVICE:PNP:\\?\USB#VID_046D&amp;PID_082C&amp;MI_02#6&amp;16FD2F8D&amp;0&amp;0002#{65E8773D-8F56-11D0-A3B9-00A0C9223196}\GLOBAL')
+     *   .then(function(source) {
+     *   // Promise resolves with same Source instance
+     * });
+     * ```
+     */
+    Source.prototype.setValue = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            var val = (typeof value === 'string') ?
+                value : value.toString();
+            if (typeof value !== 'string') {
+                _this._value = json_1.JSON.parse(val);
+            }
+            else {
+                _this._value = val;
+            }
+            item_1.Item.set('prop:item', val, _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    /**
+     * return: Promise<boolean>
+     *
+     * Check if source is kept loaded in memory
+     *
+     * #### Usage
+     *
+     * ```javascript
+     * source.getKeepLoaded().then(function(isLoaded) {
+     *   // The rest of your code here
+     * });
+     * ```
+     */
+    Source.prototype.getKeepLoaded = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:keeploaded', _this._id).then(function (val) {
+                _this._keepLoaded = (val === '1');
+                resolve(_this._keepLoaded);
+            });
+        });
+    };
+    /**
+     * param: (value: boolean)
+     * ```
+     * return: Promise<Source>
+     * ```
+     *
+     * Set Keep loaded option to ON or OFF
+     *
+     * *Chainable.*
+     *
+     * #### Usage
+     *
+     * ```javascript
+     * source.setKeepLoaded(true).then(function(source) {
+     *   // Promise resolves with same Source instance
+     * });
+     * ```
+     */
+    Source.prototype.setKeepLoaded = function (value) {
+        var _this = this;
+        return new Promise(function (resolve) {
+            _this._keepLoaded = value;
+            item_1.Item.set('prop:keeploaded', (_this._keepLoaded ? '1' : '0'), _this._id)
+                .then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    /**
+     * return: Promise<SourceTypes>
+     *
+     * Get the type of the source
+     *
+     * #### Usage
+     *
+     * ```javascript
+     * source.getType().then(function(type) {
+     *   // The rest of your code here
+     * });
+     * ```
+     */
+    Source.prototype.getType = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.get('prop:type', _this._id).then(function (val) {
+                _this._type = SourceTypes[SourceTypes[Number(val)]];
+                resolve(_this._type);
+            });
+        });
+    };
+    /**
+     * return: Promise<string>
+     *
+     * Get the ID of the source
+     *
+     * #### Usage
+     *
+     * ```javascript
+     * source.getId().then(function(id) {
+     *   // The rest of your code here
+     * });
+     * ```
+     */
+    Source.prototype.getId = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            resolve(_this._id);
+        });
+    };
+    /**
+     * return: Promise<number>
+     *
+     * Get (1-indexed) Scene ID where the source is loaded
+     *
+     * #### Usage
+     *
+     * ```javascript
+     * source.getSceneId().then(function(id) {
+     *   // The rest of your code here
+     * });
+     * ```
+     */
+    Source.prototype.getSceneId = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            resolve(Number(_this._sceneId) + 1);
+        });
+    };
+    /**
+     * return: XML
+     *
+     * Convert the Source object to an XML object. Use `toString()` to
+     * get the string version of the returned object.
+     *
+     * #### Usage
+     *
+     * ```javascript
+     * var xml = source.toXML();
+     * ```
+     */
+    Source.prototype.toXML = function () {
+        var item = new json_1.JSON();
+        item['tag'] = 'item';
+        item['name'] = this._name;
+        item['item'] = this._value;
+        item['type'] = this._type;
+        item['selfclosing'] = true;
+        if (this._cname) {
+            item['cname'] = this._cname;
+        }
+        return xml_1.XML.parseJSON(item);
+    };
+    /**
+     * return: Promise<Source>
+     *
+     * Get the current source (when function is called by sources), or the source
+     * that was right-clicked to open the source properties window (when function is called
+     * from the source properties window)
+     *
+     * #### Usage
+     *
+     * ```javascript
+     * xjs.Source.getCurrentSource().then(function(source) {
+     *   // This will fetch the current source (the plugin)
+     * }).catch(function(err) {
+     *   // Handle the error here. Errors would only occur
+     *   // if we try to execute this method on Extension plugins
+     * });
+     * ```
+     */
+    Source.getCurrentSource = function () {
+        return new Promise(function (resolve, reject) {
+            if (environment_1.Environment.isExtension()) {
+                reject(Error('Extensions do not have sources ' +
+                    'associated with them.'));
+            }
+            else if (environment_1.Environment.isSourcePlugin() || environment_1.Environment.isSourceConfig()) {
+                scene_1.Scene.searchSourcesById(item_1.Item.getBaseId()).then(function (item) {
+                    resolve(item); // this should always exist
+                });
+            }
+        });
+    };
+    /**
+     *  return: Promise<Source>
+     *
+     *  Refreshes the specified source.
+     *
+     *  #### Usage
+     *  ```javascript
+     *  // Sample 1: let source refresh itself
+     *  xjs.Source.getCurrentSource().then(function(source) {
+     *    source.refresh(); // execution of JavaScript halts because of refresh
+     *  });
+     *
+     *  // Sample 2: refresh some other source 'otherSource'
+     *  otherSource.refresh().then(function(source) {
+     *    // further manipulation of other source goes here
+     *  });
+     *  ```
+     */
+    Source.prototype.refresh = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            item_1.Item.set('refresh', '', _this._id).then(function () {
+                resolve(_this);
+            });
+        });
+    };
+    return Source;
+})();
+exports.Source = Source;
+mixin_1.applyMixins(Source, [ilayout_1.ItemLayout]);
+},{"../../internal/item":29,"../../internal/util/json":30,"../../internal/util/mixin":31,"../../internal/util/xml":32,"../environment":4,"../scene":6,"./ilayout":17}],24:[function(require,module,exports){
 /**
  * The Transition class represents a preset transition within XSplit Broadcaster.
  * This may be used to set the application's transition scheme when switching scenes,
@@ -3661,10 +5368,10 @@ exports.Scene = Scene;
  *
  * Simply use one of the available Transition objects such as Transition.FAN or
  * Transition.COLLAPSE as the parameter to the `setTransition()` method of an
- * App instance, or a valid Item instance that supports transitions (this
- * includes {@link #core/CameraItem Core/CameraItem},
- * {@link #core/GameItem Core/GameItem}, and
- * {@link #core/HTMLItem Core/HTMLItem}.)
+ * App instance, or a valid Source instance that supports transitions (this
+ * includes {@link #core/CameraSource Core/CameraSource},
+ * {@link #core/GameSource Core/GameSource}, and
+ * {@link #core/HtmlSource Core/HtmlSource}.)
  */
 var Transition = (function () {
     function Transition(key) {
@@ -3714,7 +5421,7 @@ var Transition = (function () {
     return Transition;
 })();
 exports.Transition = Transition;
-},{}],17:[function(require,module,exports){
+},{}],25:[function(require,module,exports){
 /// <reference path="../../defs/es6-promise.d.ts" />
 var internal_1 = require('./internal');
 var json_1 = require('./util/json');
@@ -3789,7 +5496,7 @@ var App = (function () {
     return App;
 })();
 exports.App = App;
-},{"./internal":20,"./util/json":22}],18:[function(require,module,exports){
+},{"./internal":28,"./util/json":30}],26:[function(require,module,exports){
 /// <reference path="../../defs/es6-promise.d.ts" />
 var Global = (function () {
     function Global() {
@@ -3811,7 +5518,7 @@ var Global = (function () {
     return Global;
 })();
 exports.Global = Global;
-},{}],19:[function(require,module,exports){
+},{}],27:[function(require,module,exports){
 /// <reference path="../../defs/es6-promise.d.ts" />
 var environment_1 = require('../core/environment');
 var item_1 = require('./item');
@@ -3855,41 +5562,50 @@ function readMetaConfigUrl() {
         if (environment_1.Environment.isSourcePlugin()) {
             var configObj = {};
             // initialize config URL if necessary
-            try {
-                var config = internal_1.exec('GetConfiguration');
-                configObj = JSON.parse(config);
-            }
-            catch (e) {
-            }
-            finally {
-                var metas = document.getElementsByTagName('meta');
-                for (var i = metas.length - 1; i >= 0; i--) {
-                    if (metas[i].name === 'xsplit:config-url') {
-                        var url = resolveRelativePath(metas[i].content, window.location.href);
-                        configObj['configUrl'] = url;
-                        var persist = {
-                            configUrl: url
-                        };
-                        global_1.Global.setPersistentConfig(persist);
-                        break;
+            var promise = new Promise(function (resolveInner) {
+                internal_1.exec('GetLocalPropertyAsync', 'prop:BrowserConfiguration', function (result) {
+                    resolveInner(decodeURIComponent(result));
+                });
+            });
+            promise.then(function (browserConfig) {
+                try {
+                    if (browserConfig === '' || browserConfig === 'null') {
+                        browserConfig = internal_1.exec('GetConfiguration');
                     }
+                    configObj = JSON.parse(browserConfig);
                 }
-                internal_1.exec('SetBrowserProperty', 'Configuration', JSON.stringify(configObj));
-                resolve();
-            }
+                catch (e) {
+                }
+                finally {
+                    var metas = document.getElementsByTagName('meta');
+                    for (var i = metas.length - 1; i >= 0; i--) {
+                        if (metas[i].name === 'xsplit:config-url') {
+                            var url = resolveRelativePath(metas[i].content, window.location.href);
+                            configObj['configUrl'] = url;
+                            var persist = {
+                                configUrl: url
+                            };
+                            global_1.Global.setPersistentConfig(persist);
+                            break;
+                        }
+                    }
+                    internal_1.exec('SetBrowserProperty', 'Configuration', JSON.stringify(configObj));
+                    resolve();
+                }
+            });
         }
         else {
             resolve();
         }
     });
 }
-function getCurrentSourceID() {
+function getCurrentSourceId() {
     return new Promise(function (resolve) {
         if (environment_1.Environment.isSourcePlugin() || environment_1.Environment.isSourceConfig()) {
             // initialize Item.getSource() functions
             internal_1.exec('GetLocalPropertyAsync', 'prop:id', function (result) {
                 var id = decodeURIComponent(result);
-                item_1.Item.setBaseID(id);
+                item_1.Item.setBaseId(id);
                 if (environment_1.Environment.isSourcePlugin()) {
                     item_1.Item.lockSourceSlot(id);
                 }
@@ -3905,7 +5621,7 @@ function informWhenConfigLoaded() {
     return new Promise(function (resolve) {
         if (environment_1.Environment.isSourceConfig()) {
             window.addEventListener('load', function () {
-                config_1.SourceConfigWindow.getInstance().emit('config-load');
+                config_1.SourcePropsWindow.getInstance().emit('config-load');
                 resolve();
             });
         }
@@ -3916,7 +5632,7 @@ function informWhenConfigLoaded() {
 }
 function init() {
     global_1.Global.addInitializationPromise(readMetaConfigUrl());
-    global_1.Global.addInitializationPromise(getCurrentSourceID());
+    global_1.Global.addInitializationPromise(getCurrentSourceId());
     global_1.Global.addInitializationPromise(informWhenConfigLoaded());
     Promise.all(global_1.Global.getInitializationPromises()).then(function () {
         document.dispatchEvent(new CustomEvent('xsplit-js-ready', {
@@ -3925,7 +5641,7 @@ function init() {
     });
 }
 init();
-},{"../core/environment":3,"../window/config":35,"./global":18,"./internal":20,"./item":21}],20:[function(require,module,exports){
+},{"../core/environment":4,"../window/config":46,"./global":26,"./internal":28,"./item":29}],28:[function(require,module,exports){
 /// <reference path="../../defs/window.d.ts" />
 exports.DEBUG = false;
 var _callbacks = {};
@@ -3970,7 +5686,7 @@ window.OnAsyncCallback = function (asyncID, result) {
         callback.call(this, decodeURIComponent(result));
     }
 };
-},{}],21:[function(require,module,exports){
+},{}],29:[function(require,module,exports){
 /// <reference path="../../defs/es6-promise.d.ts" />
 var internal_1 = require('./internal');
 var environment_1 = require('../core/environment');
@@ -4010,9 +5726,9 @@ var Item = (function () {
         }
     };
     /** Get an item's local property asynchronously */
-    Item.get = function (name, slot) {
-        if (slot === void 0) { slot = 0; }
+    Item.get = function (name, id) {
         return new Promise(function (resolve) {
+            var slot = Item.attach(id);
             internal_1.exec('GetLocalPropertyAsync' +
                 (String(slot) === '0' ? '' : slot + 1), name, function (val) {
                 resolve(val);
@@ -4020,9 +5736,9 @@ var Item = (function () {
         });
     };
     /** Sets an item's local property */
-    Item.set = function (name, value, slot) {
-        if (slot === void 0) { slot = 0; }
+    Item.set = function (name, value, id) {
         return new Promise(function (resolve) {
+            var slot = Item.attach(id);
             internal_1.exec('SetLocalPropertyAsync' +
                 (String(slot) === '0' ? '' : slot + 1), name, value, function (val) {
                 resolve(!(Number(val) < 0));
@@ -4034,11 +5750,11 @@ var Item = (function () {
         internal_1.exec('CallInner', func, arg);
     };
     /** helper function to get current source on init */
-    Item.setBaseID = function (id) {
+    Item.setBaseId = function (id) {
         Item.baseID = id;
     };
-    /** helper function for Item.getCurrentSource() */
-    Item.getBaseID = function () {
+    /** helper function for Source.getCurrentSource() */
+    Item.getBaseId = function () {
         return Item.baseID;
     };
     Item.MAX_SLOTS = 2;
@@ -4048,7 +5764,7 @@ var Item = (function () {
     return Item;
 })();
 exports.Item = Item;
-},{"../core/environment":3,"./internal":20}],22:[function(require,module,exports){
+},{"../core/environment":4,"./internal":28}],30:[function(require,module,exports){
 var xml_1 = require('./xml');
 var JSON = (function () {
     function JSON(xml) {
@@ -4118,7 +5834,7 @@ var JSON = (function () {
     return JSON;
 })();
 exports.JSON = JSON;
-},{"./xml":24}],23:[function(require,module,exports){
+},{"./xml":32}],31:[function(require,module,exports){
 function applyMixins(derivedCtor, baseCtors) {
     baseCtors.forEach(function (baseCtor) {
         Object.getOwnPropertyNames(baseCtor.prototype).forEach(function (name) {
@@ -4130,7 +5846,7 @@ function applyMixins(derivedCtor, baseCtors) {
     });
 }
 exports.applyMixins = applyMixins;
-},{}],24:[function(require,module,exports){
+},{}],32:[function(require,module,exports){
 var XML = (function () {
     function XML(json) {
         var attributes = '';
@@ -4185,7 +5901,7 @@ var XML = (function () {
     return XML;
 })();
 exports.XML = XML;
-},{}],25:[function(require,module,exports){
+},{}],33:[function(require,module,exports){
 /// <reference path="../../defs/es6-promise.d.ts" />
 var json_1 = require('../internal/util/json');
 var xml_1 = require('../internal/util/xml');
@@ -4193,7 +5909,10 @@ var xml_1 = require('../internal/util/xml');
  * The AudioDevice Class is the object returned by
  * {@link #system/System System Class'} getAudioDevices method. It provides you
  * with methods to fetch the audio device object's attributes, and also provides
- * methods to convert it back to an XML object that is compatible with XBC
+ * methods to convert it back to an XML object that is compatible with XBC.
+ *
+ * If you are looking to add a microphone device to the stage, please see
+ * {@link #system/MicrophoneDevice System/MicrophoneDevice} instead.
  *
  * ### Basic Usage
  *
@@ -4243,7 +5962,7 @@ var AudioDevice = (function () {
      * #### Usage
      *
      * ```javascript
-     * var audioDeviceID = device.getID();
+     * var audioDeviceID = device.getId();
      * ```
      */
     AudioDevice.prototype.getId = function () {
@@ -4272,7 +5991,7 @@ var AudioDevice = (function () {
      *
      * ```javascript
      * var audioDataFlow = device.getDataFlow();
-     *   //where possible values are "render" or "capture"
+     *   //where possible values are 'render' or 'capture'
      * ```
      */
     AudioDevice.prototype.getDataFlow = function () {
@@ -4317,10 +6036,10 @@ var AudioDevice = (function () {
      * #### Usage
      *
      * ```javascript
-     * audioDevice.setLevel(100);
+     * audioDevice._setLevel(100);
      * ```
      */
-    AudioDevice.prototype.setLevel = function (level) {
+    AudioDevice.prototype._setLevel = function (level) {
         this._level = level;
         return this;
     };
@@ -4349,10 +6068,10 @@ var AudioDevice = (function () {
      * #### Usage
      *
      * ```javascript
-     * audioDevice.setEnabled(true);
+     * audioDevice._setEnabled(true);
      * ```
      */
-    AudioDevice.prototype.setEnabled = function (enabled) {
+    AudioDevice.prototype._setEnabled = function (enabled) {
         this._enable = enabled;
         return this;
     };
@@ -4381,10 +6100,10 @@ var AudioDevice = (function () {
      * #### Usage
      *
      * ```javascript
-     * audioDevice.setSystemLevel(100);
+     * audioDevice._setSystemLevel(100);
      * ```
      */
-    AudioDevice.prototype.setSystemLevel = function (hwlevel) {
+    AudioDevice.prototype._setSystemLevel = function (hwlevel) {
         this._hwlevel = hwlevel;
         return this;
     };
@@ -4417,10 +6136,10 @@ var AudioDevice = (function () {
      * //     * AudioDevice.SYSTEM_LEVEL_MUTE (0)
      * //     * AudioDevice.SYSTEM_LEVEL_ENABLE (1)
      * //     * AudioDevice.SYSTEM_MUTE_CHANGE_NOT_ALLOWED (255)
-     * audioDevice.setSystemEnabled(AudioDevice.SYSTEM_LEVEL_MUTE);
+     * audioDevice._setSystemEnabled(AudioDevice.SYSTEM_LEVEL_MUTE);
      * ```
      */
-    AudioDevice.prototype.setSystemEnabled = function (hwenabled) {
+    AudioDevice.prototype._setSystemEnabled = function (hwenabled) {
         this._hwenable = hwenabled;
         return this;
     };
@@ -4449,17 +6168,17 @@ var AudioDevice = (function () {
      * #### Usage
      *
      * ```javascript
-     * audioDevice.setDelay(100);
+     * audioDevice._setDelay(100);
      * ```
      */
-    AudioDevice.prototype.setDelay = function (delay) {
+    AudioDevice.prototype._setDelay = function (delay) {
         this._delay = delay;
         return this;
     };
     /**
      * return: string
      *
-     * Converts the AudioDevice item to XML-formatted string
+     * Converts the AudioDevice object to XML-formatted string
      *
      * #### Usage
      *
@@ -4472,9 +6191,9 @@ var AudioDevice = (function () {
         device.tag = 'dev';
         device.selfclosing = true;
         device['id'] = this.getId();
-        device['level'] = this.getLevel().toFixed(6);
+        device['level'] = (this.getLevel() / 100).toFixed(6);
         device['enable'] = this.isEnabled() ? 1 : 0;
-        device['hwlevel'] = this.getSystemLevel().toFixed(6);
+        device['hwlevel'] = (this.getSystemLevel() / 100).toFixed(6);
         device['hwenable'] = this.getSystemEnabled();
         device['delay'] = this.getDelay();
         device['mix'] = this._mix;
@@ -4507,11 +6226,11 @@ var AudioDevice = (function () {
             defaultConsole: (deviceJXON['DefaultConsole'] === '1'),
             defaultMultimedia: (deviceJXON['DefaultMultimedia'] === '1')
         });
-        audio.setLevel(Number(deviceJXON['level'] !== undefined ? deviceJXON['level'] : 1))
-            .setEnabled(deviceJXON['enable'] !== undefined ? deviceJXON['enable'] === '1' : true)
-            .setSystemLevel(Number(deviceJXON['hwlevel'] !== undefined ? deviceJXON['hwlevel'] : -1))
-            .setSystemEnabled(deviceJXON['hwenable'] !== undefined ? deviceJXON['hwenable'] : 255)
-            .setDelay(Number(deviceJXON['delay'] !== undefined ? deviceJXON['delay'] : 0));
+        audio._setLevel(Number(deviceJXON['level'] !== undefined ? deviceJXON['level'] * 100 : 100))
+            ._setEnabled(deviceJXON['enable'] !== undefined ? deviceJXON['enable'] === '1' : true)
+            ._setSystemLevel(Number(deviceJXON['hwlevel'] !== undefined ? deviceJXON['hwlevel'] * 100 : -100))
+            ._setSystemEnabled(Number(deviceJXON['hwenable'] !== undefined ? deviceJXON['hwenable'] : 255))
+            ._setDelay(Number(deviceJXON['delay'] !== undefined ? deviceJXON['delay'] : 0));
         return audio;
     };
     AudioDevice.STATE_ACTIVE = 'Active';
@@ -4523,7 +6242,7 @@ var AudioDevice = (function () {
     return AudioDevice;
 })();
 exports.AudioDevice = AudioDevice;
-},{"../internal/util/json":22,"../internal/util/xml":24}],26:[function(require,module,exports){
+},{"../internal/util/json":30,"../internal/util/xml":32}],34:[function(require,module,exports){
 /// <reference path="../../defs/es6-promise.d.ts" />
 var json_1 = require('../internal/util/json');
 var xml_1 = require('../internal/util/xml');
@@ -4531,8 +6250,8 @@ var app_1 = require('../internal/app');
 /**
  * The CameraDevice Class is the object returned by
  * {@link #system/System System Class'} getCameraDevices method. It provides
- * you with methods to fetch the Camera Device's id, name, and convert it to
- * an XML object that is compatible with XBC
+ * you with methods to fetch the Camera Device's id, name, and to add it as
+ * a source in the current scene.
  *
  * ### Basic Usage
  *
@@ -4565,7 +6284,7 @@ var CameraDevice = (function () {
      * #### Usage
      *
      * ```javascript
-     * var cameraID = device.getID();
+     * var cameraID = device.getId();
      * ```
      */
     CameraDevice.prototype.getId = function () {
@@ -4603,7 +6322,7 @@ var CameraDevice = (function () {
         return xml_1.XML.parseJSON(json);
     };
     /**
-     * param: deviceJSON<JXON>
+     * param: (deviceJSON: JXON)
      * ```
      * return: CameraDevice
      * ```
@@ -4637,7 +6356,54 @@ var CameraDevice = (function () {
     return CameraDevice;
 })();
 exports.CameraDevice = CameraDevice;
-},{"../internal/app":17,"../internal/util/json":22,"../internal/util/xml":24}],27:[function(require,module,exports){
+},{"../internal/app":25,"../internal/util/json":30,"../internal/util/xml":32}],35:[function(require,module,exports){
+/// <reference path="../../defs/es6-promise.d.ts" />
+var app_1 = require('../internal/app');
+/**
+ *  Class for adding files (such as images and media)
+ *  from your file system to the stage.
+ *
+ * ### Basic Usage
+ *
+ * ```javascript
+ * var XJS = require('xjs');
+ * var File = XJS.File;
+ *
+ * var filePromise = new File('C:\\Users\\Public\\Music\\song.mp3').addToScene();
+ * ```
+ */
+var File = (function () {
+    /**
+     *  param: (file: string)
+     *
+     *  Creates a File object pertaining to a file's full path.
+     */
+    function File(file) {
+        this._path = file;
+    }
+    File.prototype._getPath = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            resolve(_this._path);
+        });
+    };
+    /**
+     *  return: Promise<boolean>
+     *
+     *  Adds this file to the current scene.
+     */
+    File.prototype.addToScene = function () {
+        var _this = this;
+        return new Promise(function (resolve) {
+            app_1.App.callFunc('addfile', _this._path).then(function () {
+                resolve(true);
+            });
+        });
+    };
+    return File;
+})();
+exports.File = File;
+},{"../internal/app":25}],36:[function(require,module,exports){
 /// <reference path="../../defs/es6-promise.d.ts" />
 var rectangle_1 = require('../util/rectangle');
 var json_1 = require('../internal/util/json');
@@ -4646,8 +6412,7 @@ var app_1 = require('../internal/app');
 /**
  * The Game Class is the object returned by {@link #system/System System Class'}
  * getGames method. It provides you with methods to fetch the game object's
- * attributes, and also provides methods to convert it back to an XML object
- * that is compatible with XBC
+ * attributes, as well as methods to add any game to the current scene.
  *
  * ### Basic Usage
  *
@@ -4657,12 +6422,11 @@ var app_1 = require('../internal/app');
  * var xml;
  *
  * System.getGames().then(function(games) {
- * 	for (var i in games) {
- * 		if(games[i].isFullscreen()) {
- * 			xml = games[i].toXML();
- * 			// Do something with the xml here. Probably add it to the current scene
- * 		}
- * 	}
+ *  for (var i in games) {
+ *    if(games[i].isFullscreen()) {
+ *      games[i].addToScene();
+ *    }
+ *  }
  * });
  * ```
  */
@@ -4735,7 +6499,7 @@ var Game = (function () {
     /**
      * return: Rectangle
      *
-     * Gets the game resolution.
+     * Gets the game resolution in pixels.
      *
      * #### Usage
      *
@@ -4789,24 +6553,32 @@ var Game = (function () {
         return this._lastframets;
     };
     /**
+     * return: number
+     *
      * Get the FPS Render of the game
      */
     Game.prototype.getFpsRender = function () {
         return this._fpsRender;
     };
     /**
+     * return: number
+     *
      * Get the Captured FPS of the game
      */
     Game.prototype.getFpsCapture = function () {
         return this._fpsCapture;
     };
     /**
+     * return: string
+     *
      * Get the image name of the game
      */
     Game.prototype.getImageName = function () {
         return this._imagename;
     };
     /**
+     * return: string
+     *
      * Get the replace image value of the game
      */
     Game.prototype.getReplace = function () {
@@ -4888,14 +6660,72 @@ var Game = (function () {
             });
         });
     };
+    /**
+     *  return: Game
+     *
+     *  Returns a special Game object that may be added to the stage. This
+     *  object automatically detects any compatible games that are running
+     *  and focused, and changes the displayed game on the stage accordingly.
+     *
+     *  #### Usage
+     *
+     * ```javascript
+     * var xjs = require('xjs');
+     * xjs.Game.autoDetect().addToScene();
+     * ```
+     */
+    Game.autoDetect = function () {
+        if (Game._autoDetect === undefined) {
+            Game._autoDetect = new Game();
+            var ad = Game._autoDetect;
+            ad._pid = 0;
+            ad._handle = 0;
+            ad._hwnd = 0;
+            ad._gapitype = "";
+            ad._width = 0;
+            ad._height = 0;
+            ad._flags = 0;
+            ad._wndname = "";
+            ad._lastframets = 0;
+            ad._fpsRender = 0;
+            ad._fpsCapture = 0;
+            ad._imagename = "";
+            Game._autoDetect.addToScene = function () {
+                return new Promise(function (resolve) {
+                    var adstring = '<item GameCapTrackActive="1" GameCapTrackActiveFullscreen="0" item="&lt;src pid=&quot;0&quot; handle=&quot;0&quot; hwnd=&quot;0&quot; GapiType=&quot;&quot; width=&quot;0&quot; height=&quot;0&quot; flags=&quot;0&quot; wndname=&quot;&quot; lastframets=&quot;0&quot; fpsRender=&quot;0.000000&quot; fpsCapture=&quot;0.000000&quot; imagename=&quot;&quot;/&gt; " name="Game: Auto Detect"  type="7" pos_left="0" pos_top="0" pos_right="0.5" pos_bottom="0.5"/>';
+                    app_1.App.callFunc('additem', adstring).then(function () {
+                        resolve(true);
+                    });
+                });
+            };
+        }
+        return Game._autoDetect;
+    };
     return Game;
 })();
 exports.Game = Game;
-},{"../internal/app":17,"../internal/util/json":22,"../internal/util/xml":24,"../util/rectangle":34}],28:[function(require,module,exports){
+},{"../internal/app":25,"../internal/util/json":30,"../internal/util/xml":32,"../util/rectangle":45}],37:[function(require,module,exports){
 /// <reference path="../../defs/es6-promise.d.ts" />
 var json_1 = require('../internal/util/json');
 var xml_1 = require('../internal/util/xml');
 var app_1 = require('../internal/app');
+/**
+ * The MicrophoneDevice class provides you with methods to add a microphone
+ * device as a source on the stage.
+ *
+ * ### Basic Usage
+ *
+ * ```javascript
+ * var XJS = require('xjs');
+ * var System = XJS.System;
+ *
+ * System.getMicrophones().then(function(microphones) {
+ *  for (var i in microphones) {
+ *    microphones[i].addToScene();
+ *  }
+ * });
+ * ```
+ */
 var MicrophoneDevice = (function () {
     function MicrophoneDevice() {
     }
@@ -4904,6 +6734,20 @@ var MicrophoneDevice = (function () {
         m._disp = jxon['disp'];
         m._name = jxon['name'];
         return m;
+    };
+    /**
+     * return: string
+     *
+     * Gets the display ID
+     *
+     * #### Usage
+     *
+     * ```javascript
+     * var micDisplayId = device.getDisplayId();
+     * ```
+     */
+    MicrophoneDevice.prototype.getDisplayId = function () {
+        return this._disp;
     };
     /**
      * return: XML
@@ -4939,7 +6783,29 @@ var MicrophoneDevice = (function () {
     return MicrophoneDevice;
 })();
 exports.MicrophoneDevice = MicrophoneDevice;
-},{"../internal/app":17,"../internal/util/json":22,"../internal/util/xml":24}],29:[function(require,module,exports){
+},{"../internal/app":25,"../internal/util/json":30,"../internal/util/xml":32}],38:[function(require,module,exports){
+var internal_1 = require('../internal/internal');
+/**
+ *  This class servers to allow developers to add new screen regions or window
+ *  regions to the stage in XSplit Broadcaster.
+ */
+var Screen = (function () {
+    function Screen() {
+    }
+    /**
+     * Initializes the screen region selector crosshair so user may select
+     * a desktop region or a window to add to the stage in the current scene.
+     */
+    Screen.prototype.addToScene = function () {
+        return new Promise(function (resolve) {
+            internal_1.exec('AppCallFunc', 'addscreen');
+            resolve(true);
+        });
+    };
+    return Screen;
+})();
+exports.Screen = Screen;
+},{"../internal/internal":28}],39:[function(require,module,exports){
 /// <reference path="../../defs/es6-promise.d.ts" />
 var app_1 = require('../internal/app');
 var audio_1 = require('./audio');
@@ -5008,7 +6874,7 @@ var System = (function () {
      * return: Promise<AudioDevice[]>
      *
      * Gets audio devices, both input and output
-     * See also: @{link #system/AudioDevice System/AudioDevice}
+     * See also: {@link #system/AudioDevice System/AudioDevice}
      *
      * #### Usage
      *
@@ -5056,7 +6922,7 @@ var System = (function () {
      * return: Promise<CameraDevice[]>
      *
      * Gets all camera devices
-     * See also: @{link #system/CameraDevice System/CameraDevice}
+     * See also: {@link #system/CameraDevice System/CameraDevice}
      *
      * #### Usage
      *
@@ -5090,7 +6956,7 @@ var System = (function () {
      * return: Promise<Game[]>
      *
      * Gets all currently running games
-     * See also: @{link #system/Game System/Game}
+     * See also: {@link #system/Game System/Game}
      *
      * #### Usage
      *
@@ -5119,7 +6985,7 @@ var System = (function () {
      * return: Promise<MicrophoneDevice[]>
      *
      * Gets all audio capture devices that may be added to the stage
-     * See also: @{link #system/MicrophoneDevice System/MicrophoneDevice}
+     * See also: {@link #system/MicrophoneDevice System/MicrophoneDevice}
      *
      * #### Usage
      *
@@ -5136,11 +7002,51 @@ var System = (function () {
                 if (micsJXON !== undefined) {
                     var micsJXONLength = micsJXON.length;
                     for (var i = 0; i < micsJXONLength; ++i) {
-                        mics.push(microphone_1.MicrophoneDevice.parse(micsJXON[i]));
+                        if (micsJXON[i]['WaveInId'] !== undefined) {
+                            mics.push(microphone_1.MicrophoneDevice.parse(micsJXON[i]));
+                        }
                     }
                 }
                 resolve(mics);
             });
+        });
+    };
+    /**
+     * return: Promise<string[]>
+     *
+     * Gets array of system-installed fonts
+     *
+     * #### Usage
+     *
+     * ```javascript
+     * var mySelect = document.getElementById("mySelect");
+     *
+     * System.getSystemFonts().then(function(fontsArray) {
+     *   var fontsArrayLength = fontsArray.length;
+     *   for (var i = 0; i < fontsArrayLength; ++i) {
+     *     var option = document.createElement('option');
+     *     option.text = 'Kiwi';
+     *     mySelect.add(option);
+     *   }
+     * });
+     * ```
+     */
+    System.getFonts = function () {
+        return new Promise(function (resolve, reject) {
+            if (environment_1.Environment.isSourcePlugin()) {
+                reject(Error('function is not available for source'));
+            }
+            else {
+                app_1.App.get('html:fontlist').then(function (fontlist) {
+                    if (typeof fontlist === 'string' && fontlist !== '') {
+                        var fontArray = fontlist.split(',');
+                        resolve(fontArray);
+                    }
+                    else {
+                        reject(Error('cannot fetch list of available system fonts'));
+                    }
+                });
+            }
         });
     };
     /**
@@ -5205,7 +7111,70 @@ var System = (function () {
     return System;
 })();
 exports.System = System;
-},{"../core/environment":3,"../internal/app":17,"../internal/internal":20,"./audio":25,"./camera":26,"./game":27,"./microphone":28}],30:[function(require,module,exports){
+},{"../core/environment":4,"../internal/app":25,"../internal/internal":28,"./audio":33,"./camera":34,"./game":36,"./microphone":37}],40:[function(require,module,exports){
+/// <reference path="../../defs/es6-promise.d.ts" />
+var app_1 = require('../internal/app');
+/**
+ *  Class for adding a web source to the stage.
+ *  URLs will use http by default unless https
+ *  is specified. This class supports adding
+ *  locally hosted HTML files as well.
+ *
+ * ### Basic Usage
+ *
+ * ```javascript
+ * var XJS = require('xjs');
+ * var Url = XJS.Url;
+ *
+ * var urlPromise = new Url('https://www.xsplit.com').addToScene();
+ * ```
+ */
+var Url = (function () {
+    /**
+     *  param: (url: string)
+     *
+     *  Creates a URL object. If unspecified, protocol is http.
+     */
+    function Url(url) {
+        this._url = url;
+    }
+    Url.prototype._getUrl = function () {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            if (/^https?:\/\//i.test(_this._url)) {
+                resolve(_this._url);
+            }
+            else if (/[a-z]+:\/\//i.test(_this._url)) {
+                reject(new Error('You may only add HTTP or HTTPS URLs to the stage.'));
+            }
+            else {
+                resolve('http://' + _this._url);
+            }
+        });
+    };
+    /**
+     *  return: Promise<boolean>
+     *
+     *  Adds this URL to the current scene as an HTML source.
+     *
+     *  Will raise an error if URL is not http or https.
+     */
+    Url.prototype.addToScene = function () {
+        var _this = this;
+        return new Promise(function (resolve, reject) {
+            _this._getUrl().then(function (url) {
+                app_1.App.callFunc('addurl', url).then(function () {
+                    resolve(true);
+                });
+            }).catch(function (error) {
+                reject(error);
+            });
+        });
+    };
+    return Url;
+})();
+exports.Url = Url;
+},{"../internal/app":25}],41:[function(require,module,exports){
 var Color = (function () {
     function Color(props) {
         if (props['rgb'] !== undefined) {
@@ -5281,7 +7250,7 @@ var Color = (function () {
     return Color;
 })();
 exports.Color = Color;
-},{}],31:[function(require,module,exports){
+},{}],42:[function(require,module,exports){
 // simple event emitter
 var EventEmitter = (function () {
     function EventEmitter() {
@@ -5311,7 +7280,7 @@ var EventEmitter = (function () {
     return EventEmitter;
 })();
 exports.EventEmitter = EventEmitter;
-},{}],32:[function(require,module,exports){
+},{}],43:[function(require,module,exports){
 /// <reference path="../../defs/es6-promise.d.ts" />
 var internal_1 = require('../internal/internal');
 var IO = (function () {
@@ -5424,7 +7393,7 @@ var IO = (function () {
     return IO;
 })();
 exports.IO = IO;
-},{"../internal/internal":20}],33:[function(require,module,exports){
+},{"../internal/internal":28}],44:[function(require,module,exports){
 /// <reference path="../../defs/es6-promise.d.ts" />
 var isReady = false;
 var readyPromise = new Promise(function (resolve) {
@@ -5443,7 +7412,16 @@ function setReady() {
     isReady = true;
 }
 exports.setReady = setReady;
-},{}],34:[function(require,module,exports){
+},{}],45:[function(require,module,exports){
+/**
+ *  The Rectangle class is a utility class used in many different parts of the
+ *  framework. Please note that there are cases where the framework uses
+ *  absolute (pixel) measurements, and cases where relative measurements are
+ *  required (0 being the left/top edges and 1 being the right/bottom edges.)
+ *
+ *  Please check the documentation of each function to determine the necessary
+ *  parameters for the Rectangle to be created.
+ */
 var Rectangle = (function () {
     function Rectangle() {
     }
@@ -5549,6 +7527,15 @@ var Rectangle = (function () {
         }
         return this;
     };
+    /**
+     *  param: (width: number, height: number)
+     *  ```
+     *  return: Rectangle
+     *  ```
+     *  Creates a rectangle from width and height dimensions. Absolute (pixels)
+     *  and relative (0-1) dimensions are accepted. Refer to the documentation
+     *  of each individual function to see which one is necessary.
+     */
     Rectangle.fromDimensions = function (width, height) {
         if (width < 0 || height < 0) {
             throw new Error('Rectangle dimensions cannot be negative.');
@@ -5558,7 +7545,16 @@ var Rectangle = (function () {
         rect._height = height;
         return rect;
     };
-    Rectangle.fromCoordinates = function (top, left, right, bottom) {
+    /**
+     *  param: (left: number, top: number, right: number, bottom: number)
+     *  ```
+     *  return: Rectangle
+     *  ```
+     *  Creates a rectangle from coordinates. Absolute (pixels)
+     *  and relative (0-1) dimensions are accepted. Refer to the documentation
+     *  of each individual function to see which one is necessary.
+     */
+    Rectangle.fromCoordinates = function (left, top, right, bottom) {
         if (top > bottom) {
             throw new Error('Top coordinate must be smaller than bottom.');
         }
@@ -5572,9 +7568,20 @@ var Rectangle = (function () {
         rect.setBottom(bottom); // calculates height
         return rect;
     };
+    /**
+     *  return: string
+     *
+     *  Returns a comma-separated string containing the width and height values.
+     */
     Rectangle.prototype.toDimensionString = function () {
         return this._width + ',' + this._height;
     };
+    /**
+     *  return: string
+     *
+     *  Returns a comma-separated string containing the coordinates in the order:
+     *  left, top, right, bottom.
+     */
     Rectangle.prototype.toCoordinateString = function () {
         if (this._left === undefined) {
             throw new Error('This Rectangle instance does not have coordinates.');
@@ -5583,6 +7590,27 @@ var Rectangle = (function () {
             return this._left + ',' + this._top + ',' + this._right + ',' + this._bottom;
         }
     };
+    /**
+     *  return: string
+     *  ```
+     *  param: (format ?: string)
+     *  ```
+     *  Returns a string representation of the Rectangle object. If the format
+     *  optional parameter is omitted, then this is simply the string from
+     *  `toDimensionString()`. Sample usage:
+     *
+     *  ```javascript
+     *  console.log(rect.toString('Origin is at (:left, :top)'));```
+     *
+     *  You can format the output string by specifying the following markers in
+     *  the parameter:
+     *  - :left
+     *  - :top
+     *  - :right
+     *  - :bottom
+     *  - :width
+     *  - :height
+     */
     Rectangle.prototype.toString = function (value) {
         if (value === undefined) {
             return this.toDimensionString(); // all rectangles have dimensions
@@ -5601,7 +7629,7 @@ var Rectangle = (function () {
     return Rectangle;
 })();
 exports.Rectangle = Rectangle;
-},{}],35:[function(require,module,exports){
+},{}],46:[function(require,module,exports){
 /// <reference path="../../defs/es6-promise.d.ts" />
 var __extends = (this && this.__extends) || function (d, b) {
     for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
@@ -5612,7 +7640,7 @@ var __extends = (this && this.__extends) || function (d, b) {
 var eventemitter_1 = require('../util/eventemitter');
 var internal_1 = require('../internal/internal');
 /** This utility class exposes functionality for source plugin developers to
- *  handle the configuration window for their source plugins. The framework also
+ *  handle the properties window for their source plugins. The framework also
  *  uses this class for its own internal purposes.
  *
  *  Developers can use this class to specify how their configuration HTML
@@ -5622,16 +7650,16 @@ var internal_1 = require('../internal/internal');
  * Inherits from: {@link #util/EventEmitter Util/EventEmitter}
  *
  *  At the moment, the only relevant event for developers is:
- *    - `set-selected-tab`: used when using Tabbed mode. Passes the name of the selected tab so configuration window can update itself accordingly.
+ *    - `set-selected-tab`: used when using Tabbed mode. Passes the name of the selected tab so properties window can update itself accordingly.
  *
  *  Use the `on(event: string, handler: Function)` function to listen to an event.
  */
-var SourceConfigWindow = (function (_super) {
-    __extends(SourceConfigWindow, _super);
+var SourcePropsWindow = (function (_super) {
+    __extends(SourcePropsWindow, _super);
     /**
      *  Use getInstance() instead.
      */
-    function SourceConfigWindow() {
+    function SourcePropsWindow() {
         var _this = this;
         _super.call(this);
         window.addEventListener('message', function (event) {
@@ -5658,35 +7686,34 @@ var SourceConfigWindow = (function (_super) {
         this.on('config-load', function () {
             _this._informConfigLoaded();
         });
-        SourceConfigWindow._instance = this;
+        SourcePropsWindow._instance = this;
     }
     /**
      *  Gets the instance of the window utility. Use this instead of the constructor.
      */
-    SourceConfigWindow.getInstance = function () {
-        if (SourceConfigWindow._instance === undefined) {
-            SourceConfigWindow._instance = new SourceConfigWindow();
+    SourcePropsWindow.getInstance = function () {
+        if (SourcePropsWindow._instance === undefined) {
+            SourcePropsWindow._instance = new SourcePropsWindow();
         }
-        return SourceConfigWindow._instance;
+        return SourcePropsWindow._instance;
     };
     // helper function to communicate with built-in container
-    SourceConfigWindow.prototype._notify = function (obj) {
+    SourcePropsWindow.prototype._notify = function (obj) {
         window.parent.postMessage(JSON.stringify(obj), '*');
     };
     /**
-     *  Informs the application that the plugin intends to use the entire
-     *  window for rendering its configuration.
+     *  Informs the application that the plugin intends to use the entire window for rendering its configuration.
      */
-    SourceConfigWindow.prototype.useFullWindow = function () {
-        this._setRenderMode(SourceConfigWindow._MODE_FULL);
+    SourcePropsWindow.prototype.useFullWindow = function () {
+        this._setRenderMode(SourcePropsWindow._MODE_FULL);
         // use default size to avoid layout issues. plugin can resize later
-        this.resizeConfig(354, 390);
+        this.resize(354, 390);
     };
     /**
      *  param: ({customTabs: string[], tabOrder: string[]})
      *
      *  Informs the application that the plugin intends to use the existing tab
-     *  system to render its configuration window.
+     *  system to render its properties window.
      *
      *  The `customTabs` node should contain a list of tab titles that the plugin
      *  will create for itself.
@@ -5695,12 +7722,12 @@ var SourceConfigWindow = (function (_super) {
      *  from the specified custom tabs, and the set of reusable XSplit tabs:
      *  'Color', 'Layout' and 'Transition'.
      */
-    SourceConfigWindow.prototype.useTabbedWindow = function (config) {
-        this._setRenderMode(SourceConfigWindow._MODE_TABBED);
+    SourcePropsWindow.prototype.useTabbedWindow = function (config) {
+        this._setRenderMode(SourcePropsWindow._MODE_TABBED);
         this._declareCustomTabs(config.customTabs);
         this._setTabOrder(config.tabOrder);
     };
-    SourceConfigWindow.prototype._setRenderMode = function (renderMode) {
+    SourcePropsWindow.prototype._setRenderMode = function (renderMode) {
         this._mode = renderMode;
         this._notify({
             event: 'set-mode',
@@ -5708,30 +7735,30 @@ var SourceConfigWindow = (function (_super) {
         });
     };
     ;
-    SourceConfigWindow.prototype._setTabOrder = function (tabArray) {
+    SourcePropsWindow.prototype._setTabOrder = function (tabArray) {
         this._notify({
             event: 'set-tab-order',
             value: JSON.stringify(tabArray)
         });
     };
     ;
-    SourceConfigWindow.prototype._declareCustomTabs = function (tabArray) {
+    SourcePropsWindow.prototype._declareCustomTabs = function (tabArray) {
         this._notify({
             event: 'set-custom-tabs',
             value: JSON.stringify(tabArray)
         });
     };
     ;
-    SourceConfigWindow.prototype._informConfigLoaded = function () {
+    SourcePropsWindow.prototype._informConfigLoaded = function () {
         this._notify({ event: 'load' });
     };
     /**
      *  param: width<number>, height<number>
      *
-     *  Resizes the configuration window. Currently only works when using full
+     *  Resizes the properties window. Currently only works when using full
      *  window mode.
      */
-    SourceConfigWindow.prototype.resizeConfig = function (width, height) {
+    SourcePropsWindow.prototype.resize = function (width, height) {
         this._notify({
             event: 'resize',
             value: JSON.stringify({
@@ -5741,27 +7768,46 @@ var SourceConfigWindow = (function (_super) {
         });
     };
     ;
-    /** Closes the configuration window. */
-    SourceConfigWindow.prototype.closeConfig = function () {
+    /**
+     *  param: name<string>
+     *
+     *  Changes the title of the source properties dialog.
+     *  Note: The title change is temporary, as re-opening the source properties
+     *  resets the title to the display name of the source
+     *  (custom name takes precedence over name)
+     */
+    SourcePropsWindow.prototype.requestDialogTitleChange = function (name) {
+        this._notify({
+            event: 'change-dialog-title',
+            value: name
+        });
+    };
+    ;
+    /** Closes the properties window. */
+    SourcePropsWindow.prototype.close = function () {
         internal_1.exec('Close');
     };
     ;
-    SourceConfigWindow._MODE_FULL = 'full';
-    SourceConfigWindow._MODE_TABBED = 'embedded';
-    return SourceConfigWindow;
+    SourcePropsWindow._MODE_FULL = 'full';
+    SourcePropsWindow._MODE_TABBED = 'embedded';
+    return SourcePropsWindow;
 })(eventemitter_1.EventEmitter);
-exports.SourceConfigWindow = SourceConfigWindow;
-},{"../internal/internal":20,"../util/eventemitter":31}],36:[function(require,module,exports){
+exports.SourcePropsWindow = SourcePropsWindow;
+},{"../internal/internal":28,"../util/eventemitter":42}],47:[function(require,module,exports){
 /// <reference path="../../defs/es6-promise.d.ts" />
+/// <reference path="../../defs/object.d.ts" />
 var rectangle_1 = require('../util/rectangle');
 var environment_1 = require('../core/environment');
 var internal_1 = require('../internal/internal');
 /**
  *  This class is used to spawn new browser processes that can be used to open
- *  other URLS. Source plugins do not have this functionality (but their
- *  configuration windows may use this.)
+ *  other URLs. Source plugins do not have this functionality (but their
+ *  properties windows may use this.)
  *
- *  Note that opening a new dialog replaces the old one.
+ *  Note that opening a new dialog replaces the old one. Also, dialogs are
+ *  considered to be the same type of window as their parent windows: e.g.,
+ *  dialogs from extension windows are considered by the framework to have
+ *  access to the same functions as extensions.
  *
  *  Most of the methods are chainable.
  *
@@ -5786,17 +7832,27 @@ var internal_1 = require('../internal/internal');
  *    });
  *  });
  *
- *  // in the opened dialog, simply call
- *  // Dialog.return('returnedStringValue');
- *  // to return a value
+ *  // in the opened dialog, call Dialog.return() to return a value
+ *  //
+ *  // see documentation below for more details
  *  ```
  */
 var Dialog = (function () {
     function Dialog() {
+        var _this = this;
         if (environment_1.Environment.isSourcePlugin()) {
             throw new Error('Dialogs are not available for source plugins.');
         }
         else {
+            this._result = null;
+            var eventListener = function (e) {
+                // self-deleting event listener
+                e.target.removeEventListener(e.type, eventListener);
+                _this._result = e.detail;
+                _this._resultListener = null;
+            };
+            document.addEventListener('xsplit-dialog-result', eventListener);
+            this._resultListener = eventListener;
             return this;
         }
     }
@@ -5826,16 +7882,28 @@ var Dialog = (function () {
      * *Chainable.*
      */
     Dialog.createAutoDialog = function (url) {
-        var dialog = new Dialog();
-        dialog._url = url;
-        dialog._autoclose = true;
-        return dialog;
+        if (environment_1.Environment.isSourceConfig()) {
+            throw new Error('Auto dialogs are not available for config windows.');
+        }
+        else {
+            var dialog = new Dialog();
+            dialog._url = url;
+            dialog._autoclose = true;
+            return dialog;
+        }
     };
     /**
-     *  param: (result: string)
+     *  param: (result ?: string)
      *
-     *  Closes this dialog with an optional string result. (Call this from the
-     *  dialog.)
+     *  Closes this dialog with an optional string result. For more complex
+     *  return values, try JSON.stringify. (Call this method from the dialog.)
+     *
+     *  As an alternative, lightweight dialogs that do not want to include xjs.js
+     *  may simply call native XBC methods to return a value.
+     *  ```javascript
+     *  external.SetDialogResult(stringResult);
+     *  external.Close();
+     *  ```
      */
     Dialog.return = function (result) {
         if (result !== undefined) {
@@ -5848,7 +7916,7 @@ var Dialog = (function () {
      *
      *  return: Dialog
      *
-     *  Sets the size of the dialog to be displayed.
+     *  Sets the size in pixels of the dialog to be displayed.
      *
      * *Chainable.*
      */
@@ -5920,6 +7988,7 @@ var Dialog = (function () {
      * *Chainable.*
      */
     Dialog.prototype.show = function () {
+        this._result = null;
         if (this._autoclose) {
             internal_1.exec('NewAutoDialog', this._url, '', this._size === undefined ?
                 undefined : (this._size.getWidth() + ',' + this._size.getHeight()));
@@ -5936,13 +8005,33 @@ var Dialog = (function () {
      *  Gets the string result returned from the spawned dialog.
      */
     Dialog.prototype.getResult = function () {
+        var _this = this;
         return new Promise(function (resolve) {
-            var eventListener = function (e) {
-                // self-deleting event listener
-                e.target.removeEventListener(e.type, eventListener);
-                resolve(e.detail);
-            };
-            document.addEventListener('xsplit-dialog-result', eventListener);
+            if (_this._result !== null) {
+                resolve(_this._result);
+            }
+            else if (_this._resultListener === null) {
+                var eventListener = function (e) {
+                    // self-deleting event listener
+                    e.target.removeEventListener(e.type, eventListener);
+                    _this._result = e.detail;
+                    _this._resultListener = null;
+                    resolve(_this._result);
+                };
+                document.addEventListener('xsplit-dialog-result', eventListener);
+                _this._resultListener = eventListener;
+            }
+            else {
+                Object.observe(_this, function (changes) {
+                    // Search for changes with the name as result
+                    var change = changes.filter(function (elem) {
+                        return elem.name === '_result';
+                    });
+                    if (change !== undefined && change.length > 0) {
+                        resolve(change[0].object._result);
+                    }
+                });
+            }
         });
     };
     /**
@@ -5979,7 +8068,7 @@ if (environment_1.Environment.isSourceConfig() || environment_1.Environment.isEx
             detail: result }));
     };
 }
-},{"../core/environment":3,"../internal/internal":20,"../util/rectangle":34}],37:[function(require,module,exports){
+},{"../core/environment":4,"../internal/internal":28,"../util/rectangle":45}],48:[function(require,module,exports){
 /// <reference path="../../defs/es6-promise.d.ts" />
 var __extends = (this && this.__extends) || function (d, b) {
     for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
@@ -5995,8 +8084,10 @@ var _RESIZE = '2';
  *  of the window (e.g., resizing), and also serves as an event emitter
  *  for all events that the window should be able to handle.
  *
- *  Currently, only the following event is available:
+ *  Currently, the following events are available:
  *    - `scene-load`: notifies in the event of a scene change. Handler is a function f(sceneNumber: number)
+ *    - `sources-list-highlight`: notifies when a user hovers over a source in the stage, returning its source id, or when the mouse moves out of a source bounding box, returning null. Source id is also returned when hovering over the bottom panel. Handler is a function f(id: string)
+ *    - `sources-list-select`: notifies when a user clicks a source in the stage. Handler is a function f(id: string)
  *
  *  Use the `on(event: string, handler: Function)` function to listen to an event.
  *
@@ -6035,8 +8126,20 @@ if (environment_1.Environment.isExtension()) {
             ExtensionWindow.getInstance().emit('scene-load', Number(scene));
         }
     };
+    window.SourcesListHighlight = function (view, id) {
+        if (view === 0) {
+            ExtensionWindow.getInstance().emit('sources-list-highlight', id === '' ?
+                null : id);
+        }
+    };
+    window.SourcesListSelect = function (view, id) {
+        if (view === 0) {
+            ExtensionWindow.getInstance().emit('sources-list-select', id === '' ?
+                null : id);
+        }
+    };
 }
-},{"../core/environment":3,"../internal/app":17,"../util/eventemitter":31}],38:[function(require,module,exports){
+},{"../core/environment":4,"../internal/app":25,"../util/eventemitter":42}],49:[function(require,module,exports){
 /// <reference path="../../defs/es6-promise.d.ts" />
 var __extends = (this && this.__extends) || function (d, b) {
     for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
@@ -6044,6 +8147,7 @@ var __extends = (this && this.__extends) || function (d, b) {
     __.prototype = b.prototype;
     d.prototype = new __();
 };
+var global_1 = require('../internal/global');
 var environment_1 = require('../core/environment');
 var eventemitter_1 = require('../util/eventemitter');
 /** This utility class is used internally by the framework for certain important
@@ -6069,10 +8173,10 @@ var SourcePluginWindow = (function (_super) {
         this.on('message-source', function (message) {
             if (message.request !== undefined) {
                 if (message.request === 'saveConfig') {
-                    this.emit('save-config', message.data);
+                    this.emit('save-config', this._hideGlobalConfig(message.data));
                 }
                 else if (message.request === 'applyConfig') {
-                    this.emit('apply-config', message.data);
+                    this.emit('apply-config', this._hideGlobalConfig(message.data));
                 }
             }
         });
@@ -6086,6 +8190,22 @@ var SourcePluginWindow = (function (_super) {
             SourcePluginWindow._instance = new SourcePluginWindow();
         }
         return SourcePluginWindow._instance;
+    };
+    // We modify the configuration sent from the source properties window
+    // so that we do not see 'persistent' configuration such as config-url.
+    // When saving, this is restored back to the config object through
+    // Item#saveConfig().
+    //
+    // Note that we could have chosen to hide this from Item#requestSaveConfig()
+    // or Item#applyConfig() calls, but unfortunately, the context of the source
+    // properties window cannot always correctly determine the global config nodes
+    // when dealing with sources other than the current source (right-clicked.)
+    SourcePluginWindow.prototype._hideGlobalConfig = function (data) {
+        var persist = global_1.Global.getPersistentConfig();
+        for (var key in persist) {
+            delete data[key];
+        }
+        return data;
     };
     return SourcePluginWindow;
 })(eventemitter_1.EventEmitter);
@@ -6110,7 +8230,7 @@ if (environment_1.Environment.isSourcePlugin()) {
         SourcePluginWindow.getInstance().emit('set-background-color', color);
     };
 }
-},{"../core/environment":3,"../util/eventemitter":31}],"xjs":[function(require,module,exports){
+},{"../core/environment":4,"../internal/global":26,"../util/eventemitter":42}],"xjs":[function(require,module,exports){
 function __export(m) {
     for (var p in m) if (!exports.hasOwnProperty(p)) exports[p] = m[p];
 }
@@ -6123,24 +8243,37 @@ __export(require('./core/app'));
 __export(require('./core/channel'));
 __export(require('./core/scene'));
 __export(require('./core/transition'));
-__export(require('./core/item/item'));
-__export(require('./core/item/camera'));
-__export(require('./core/item/game'));
-__export(require('./core/item/audio'));
-__export(require('./core/item/html'));
-var ichroma_1 = require('./core/item/ichroma');
+__export(require('./core/dll'));
+__export(require('./core/extension'));
+__export(require('./core/source/source'));
+__export(require('./core/source/camera'));
+__export(require('./core/source/game'));
+__export(require('./core/source/audio'));
+__export(require('./core/source/html'));
+__export(require('./core/source/flash'));
+__export(require('./core/source/screen'));
+__export(require('./core/source/image'));
+__export(require('./core/source/media'));
+var ichroma_1 = require('./core/source/ichroma');
 exports.KeyingType = ichroma_1.KeyingType;
 exports.ChromaPrimaryColors = ichroma_1.ChromaPrimaryColors;
 exports.ChromaAntiAliasLevel = ichroma_1.ChromaAntiAliasLevel;
+var iplayback_1 = require('./core/source/iplayback');
+exports.ActionAfterPlayback = iplayback_1.ActionAfterPlayback;
+var cuepoint_1 = require('./core/source/cuepoint');
+exports.CuePoint = cuepoint_1.CuePoint;
 __export(require('./system/system'));
 __export(require('./system/audio'));
 __export(require('./system/game'));
 __export(require('./system/camera'));
 __export(require('./system/microphone'));
+__export(require('./system/url'));
+__export(require('./system/screen'));
+__export(require('./system/file'));
 __export(require('./window/config'));
 __export(require('./window/source'));
 __export(require('./window/extension'));
 __export(require('./window/dialog'));
 var ready_1 = require('./util/ready');
 exports.ready = ready_1.ready;
-},{"./core/app":1,"./core/channel":2,"./core/environment":3,"./core/item/audio":4,"./core/item/camera":5,"./core/item/game":6,"./core/item/html":7,"./core/item/ichroma":9,"./core/item/item":13,"./core/scene":15,"./core/transition":16,"./internal/init":19,"./system/audio":25,"./system/camera":26,"./system/game":27,"./system/microphone":28,"./system/system":29,"./util/color":30,"./util/io":32,"./util/ready":33,"./util/rectangle":34,"./window/config":35,"./window/dialog":36,"./window/extension":37,"./window/source":38}]},{},["xjs"]);
+},{"./core/app":1,"./core/channel":2,"./core/dll":3,"./core/environment":4,"./core/extension":5,"./core/scene":6,"./core/source/audio":7,"./core/source/camera":8,"./core/source/cuepoint":9,"./core/source/flash":10,"./core/source/game":11,"./core/source/html":12,"./core/source/ichroma":14,"./core/source/image":18,"./core/source/iplayback":19,"./core/source/media":21,"./core/source/screen":22,"./core/source/source":23,"./core/transition":24,"./internal/init":27,"./system/audio":33,"./system/camera":34,"./system/file":35,"./system/game":36,"./system/microphone":37,"./system/screen":38,"./system/system":39,"./system/url":40,"./util/color":41,"./util/io":43,"./util/ready":44,"./util/rectangle":45,"./window/config":46,"./window/dialog":47,"./window/extension":48,"./window/source":49}]},{},["xjs"]);

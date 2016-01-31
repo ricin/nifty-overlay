@@ -46,11 +46,11 @@ inputTemplate.image = _.template('<span><input class="image_field" name="<%=name
 
   <script>
 var xjs = require('xjs');
-var configWindow = xjs.SourceConfigWindow.getInstance();
+var propsWindow = xjs.SourcePropsWindow.getInstance();
 var extensionWindow = xjs.ExtensionWindow.getInstance();
-var Item = xjs.Item;
+var Source = xjs.Source;
 var Scene = xjs.Scene;
-var sourceItem;
+var mySource;
 var sourceId;
 var configObj = {};
 configObj.data = [];
@@ -59,18 +59,18 @@ var configDef;
 if(xjs.Environment.isSourceConfig()){
 	xjs.ready()
 	.then(function() {
-		configWindow.useTabbedWindow({
+		propsWindow.useTabbedWindow({
 			customTabs: ['Data'],
 			tabOrder: ['Data','Layout', 'Color', 'Transition']
 		});
-	}).then(Item.getCurrentSource)
-	.then(function(myItem) {
-		sourceItem = myItem;
-		return myItem.getID();
+	}).then(Source.getCurrentSource)
+	.then(function(source) {
+		mySource = source;
+		return source.getId();
 		})
 	.then(function(myId){
 		sourceId = myId;
-		return sourceItem.loadConfig();
+		return mySource.loadConfig();
 	}).then(function(config) {
 		configObj = config;
 		configDef = configObj.configDef;
@@ -112,16 +112,16 @@ $('#wrapper').empty();
 Scene.initializeScenes().then(function(val) {
 	if(val===true) {
 	Scene.getActiveScene().then(function(currentScene){
-		return currentScene.getItems();
-		}).then(function(items){
-		items.forEach(function(item,i){
+		return currentScene.getSources();
+		}).then(function(sources){
+		sources.forEach(function(source,i){
 			var sourceId;
-			item.getType().then(function(type){
+			source.getType().then(function(type){
 
 				if(type == 8){
-				 item.getID().then(function(myId){
+				 source.getId().then(function(myId){
 					sourceId = myId;
-					return item.loadConfig();
+					return source.loadConfig();
 				 }).then(function(config){
 						if(typeof config.configDef !== 'undefined'){
 							configObj = config;
@@ -170,7 +170,7 @@ $(function(){
 	});
 	$('body').on('click','#controls button',function(event){
 		configObj.control = $(this).data('targetFunc');
-		sourceItem.applyConfig(configObj);
+		mySource.applyConfig(configObj);
 	});
 	$('body').on('click','.local_image',function(event){
 		event.preventDefault();
@@ -253,31 +253,29 @@ function saveFields(sourceId) {
 	}
 	
 	if(xjs.Environment.isSourceConfig()){
-	Item.getCurrentSource().then(function (sourceItem){
-		sourceItem.requestSaveConfig(configObj);
-		//configWindow.closeConfig();
+	Source.getCurrentSource().then(function (mySource){
+		mySource.requestSaveConfig(configObj);
+		//propsWindow.closeConfig();
 		});
 	}
 	else {
-		var sourceItem;
+		var mySource;
 		var sourceCName;
-		Scene.searchAllForItemId(sourceId).then(function (item){
-			sourceItem = item;
-			return sourceItem.getCustomName();
+		Scene.searchSourcesById(sourceId).then(function (source){
+			mySource = source;
+			return mySource.getCustomName();
 			}).then(function(cname){
 				sourceCName = cname;
-				return sourceItem.getName();
+				return mySource.getName();
 			}).then(function (name){
 				var re = /.*[\\\/](.*)/gmi;
 				var result = re.exec(name);
-				console.log(result[1])
-				return Scene.searchAllForItemName(result[1]);
-			}).then(function(items){
-				console.log(items, sourceCName);
-				items.forEach(function(item,i){
-					item.getCustomName().then(function(name){
+				return Scene.searchSourcesByName(result[1]);
+			}).then(function(sources){
+				sources.forEach(function(source,i){
+					source.getCustomName().then(function(name){
 						if(name == sourceCName){
-							item.requestSaveConfig(configObj);
+							source.requestSaveConfig(configObj);
 						}
 					});
 				});

@@ -1,7 +1,7 @@
 var xjs = require('xjs');
-var Item = xjs.Item;
+var Source = xjs.Source;
 var sourceWindow = xjs.SourcePluginWindow.getInstance();
-var sourceItem;
+var mySource;
 var configDefDefault = {controls:false,resize:false,css:false,fields:[],groups:[]};
 var fieldsDefault = {label:"",type:"text",copy:false,tip:false,default:false,output:"",group:""};
 if(typeof configDef === 'undefined'){
@@ -75,10 +75,10 @@ $(function(){
 
 function setConfigObj() { 
 	 xjs.ready()
-	  .then(Item.getCurrentSource)
-	  .then(function(myItem) {
-		  sourceItem = myItem;
-		return myItem.loadConfig();
+	  .then(Source.getCurrentSource)
+	  .then(function(source) {
+		  mySource = source;
+		return mySource.loadConfig();
 	  }).then(function(configObj) {
 		configObj.configDef = configDef;
 		if(typeof configObj.data == 'undefined'){
@@ -92,15 +92,15 @@ function setConfigObj() {
 				}
 			});
 		}
-console.log(configObj);
-		sourceItem.saveConfig(configObj);
+
+		mySource.saveConfig(configObj);
 		updateFields(configObj);
 	  });
  }
 
 sourceWindow.on('save-config', function(configObj) {
 	configObj.configDef = configDef;
-  sourceItem.saveConfig(configObj);
+  mySource.saveConfig(configObj);
   updateFields(configObj);
 });
 sourceWindow.on('apply-config', function(configObj) {
@@ -129,24 +129,24 @@ function updateFields(configObj){
 	});
 	if(typeof configObj.resolution !== 'undefined' && configObj.resolution.w && configObj.resolution.h){
 		var rect = xjs.Rectangle.fromDimensions(configObj.resolution.w,configObj.resolution.h);
-		sourceItem.setBrowserCustomSize(rect);
+		mySource.setBrowserCustomSize(rect);
 	}
 	if(typeof configObj.css !== 'undefined'){
 		if(configObj.css == ""){
-			sourceItem.setCustomCSS("");
-			sourceItem.enableCustomCSS(false);
+			mySource.setCustomCSS("");
+			mySource.enableCustomCSS(false);
 		}
 		else {
 
-			sourceItem.isCustomCSSEnabled().then(function(result){
+			mySource.isCustomCSSEnabled().then(function(result){
 				if(!result){
-					sourceItem.enableCustomCSS(true);
+					mySource.enableCustomCSS(true);
 				}
 				var appliedCSS = configObj.css;
 				if(configObj.css.indexOf('{')<=0){
 					appliedCSS = "body {"+appliedCSS+"}";
 				}
-				sourceItem.setCustomCSS(appliedCSS);
+				mySource.setCustomCSS(appliedCSS);
 			});
 			
 		}

@@ -2,6 +2,7 @@ var xjs = require('xjs');
 var Source = xjs.Source;
 var sourceWindow = xjs.SourcePluginWindow.getInstance();
 var mySource;
+var configObj = false;
 var configDefDefault = {controls:false,resize:false,css:false,fields:[],groups:[]};
 var fieldsDefault = {label:"",type:"text",copy:false,tip:false,default:false,output:"",group:""};
 if(typeof configDef === 'undefined'){
@@ -59,14 +60,26 @@ $(function(){
 				}
 				field.output = '#'+$(this).attr('id');
 				field.default = $(this).text();
-				configDef.fields.push(field);
+				var fieldIndex = configDef.fields.push(field);
+				$(this).data('index',fieldIndex-1);
 			}
 		});
 	};
 	setConfigDefaults();
 	setConfigObj();
 	
-	$('div[data-config*="\\"type\\":\\"number\\""]').click(function (){
+	$('div[data-config*="\\"type\\":\\"number\\""]').click(function (e){
+		var field = $(this);
+		mySource.loadConfig().then(function(configObj) {
+			if(e.which==1){
+				configObj.data[field.data('index')] = parseInt(configObj.data[field.data('index')])+1;
+			}
+			else if(e.which==2){
+				configObj.data[field.data('index')] = parseInt(configObj.data[field.data('index')])-1;
+			}
+			mySource.saveConfig(configObj);
+			updateFields(configObj);
+		});
 	});
 });
 //END load config from DOM

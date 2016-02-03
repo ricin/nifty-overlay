@@ -66,8 +66,8 @@ if(xjs.Environment.isSourceConfig()){
 	}).then(Source.getCurrentSource)
 	.then(function(source) {
 		mySource = source;
-		return source.getId();
-		})
+		return mySource.getId();
+	})
 	.then(function(myId){
 		sourceId = myId;
 		return mySource.loadConfig();

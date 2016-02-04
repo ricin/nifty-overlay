@@ -1,6 +1,6 @@
 <html>
 <head>
-<!--<script type="text/javascript" src="https://getfirebug.com/firebug-lite.js#startOpened"></script>-->
+<script type="text/javascript" src="https://getfirebug.com/firebug-lite.js#startOpened"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/handlebars.js/4.0.3/handlebars.min.js"></script>
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.4/jquery.min.js"></script>
 <script src="js/jquery.serialize-object.min.js"></script>
@@ -100,10 +100,12 @@ if(xjs.Environment.isExtension()){
 	});
 }
 extensionWindow.on('scene-load', function(sceneNum){
+console.log('scene-load',sceneNum);
 	xjs.ready().then(function(){
 		initConfigExtension()
 	});
 });
+
 
 function initConfigExtension(){
 $('#wrapper').empty();
@@ -140,7 +142,6 @@ Scene.initializeScenes().then(function(val) {
 									}
 								});
 							}
-							console.log(configObj);
 							updateFields(configObj, sourceId);
 						}
 					});
@@ -198,7 +199,6 @@ $(function(){
  });
  
  function makeGroups(sourceId) {
- console.log(configDef.groups);
 	_.forEach(configDef.groups,function(group, i){
 		var groupTemplate = _.template($("#group_template").html());
 		$('form[data-id="'+sourceId+'"] .custom_fields').append(groupTemplate({group:group}));
@@ -216,7 +216,6 @@ function makeFields(sourceId) {
 			field.name += '[0]';
 		} 
 		var fieldTemplate = _.template($("#field_template").html());
-		console.log(fieldTemplate({inputTemplate:inputTemplate,field:field,i:i}));
 		$('form[data-id="'+sourceId+'"] .custom_fields '+field.group).append(fieldTemplate({inputTemplate:inputTemplate,field:field,i:i}));
 			
 	});
@@ -284,7 +283,6 @@ function saveFields(sourceId) {
 
 }
 function updateFields(configObj, sourceId){
-console.log(configObj.data);
 	configObj.data.forEach(function (value, i){
 		if(typeof value === 'object'){
 			value.forEach(function(sub,num){

@@ -43,6 +43,15 @@ inputTemplate.image = _.template('<span><input class="image_field" name="<%=name
 	<% } %>
 	</div>
 </script>
+<script id="scene-menu_template" type="text/template">
+Scene: <select id="scene_menu">
+<% scenes.forEach(function(scene,i){ %>
+	<option value="<%=scene.num%>"<% if(activeScene == i+1){ %> selected<%}%>>
+		<%=scene.name%>
+	</option>
+<% });%>
+</select>
+</script>
 
   <script>
 var xjs = require('xjs');
@@ -55,6 +64,7 @@ var sourceId;
 var configObj = {};
 configObj.data = [];
 var configDef;
+var activeScene;
  
 if(xjs.Environment.isSourceConfig()){
 	xjs.ready()
@@ -96,26 +106,32 @@ if(xjs.Environment.isSourceConfig()){
 }
 if(xjs.Environment.isExtension()){
 	xjs.ready().then(function(){
-		initConfigExtension()
+		Scene.getActiveScene().then(function(scene){
+			scene.getSceneNumber().then(function(num) {
+				activeScene = num;
+				initConfigExtension(scene);
+			});
+		});
 	});
 }
 extensionWindow.on('scene-load', function(sceneNum){
-console.log('scene-load',sceneNum);
 	xjs.ready().then(function(){
-		initConfigExtension()
+		Scene.getActiveScene().then(function(scene){
+			scene.getSceneNumber().then(function(num) {
+				activeScene = num;
+				initConfigExtension(scene);
+			});
+		});
 	});
 });
 
 
-function initConfigExtension(){
+function initConfigExtension(currentScene){
 $('#wrapper').empty();
-
-//var currentScene = Scene.getById(sceneNum);
+makeSceneMenu();
 Scene.initializeScenes().then(function(val) {
 	if(val===true) {
-	Scene.getActiveScene().then(function(currentScene){
-		return currentScene.getSources();
-		}).then(function(sources){
+		currentScene.getSources().then(function(sources){
 		sources.forEach(function(source,i){
 			var sourceId;
 			source.getType().then(function(type){
@@ -196,12 +212,34 @@ $(function(){
 		$('form[data-id="'+sourceId+'"] #data-'+id+'-'+num).parent('span').remove();
 		renumberCopyField(id, sourceId);
 	});
+	$('body').on('change','#scene_menu',function(event){
+		event.preventDefault();
+		activeScene = $(this).val();
+		xjs.ready().then(function(){
+			initConfigExtension(Scene.getById(activeScene));
+		});
+	});
  });
  
  function makeGroups(sourceId) {
 	_.forEach(configDef.groups,function(group, i){
 		var groupTemplate = _.template($("#group_template").html());
 		$('form[data-id="'+sourceId+'"] .custom_fields').append(groupTemplate({group:group}));
+	});
+ }
+ function makeSceneMenu(){
+ 	var sceneMenuTemplate = _.template($("#scene-menu_template").html());
+	var sceneNumbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+	var promises = sceneNumbers.map(function(number) {
+	  return new Promise(function(resolve) {
+		Scene.getById(number).getName().then(function(name) {
+		var scene = {name:name,num:number};
+		  resolve(scene);
+		});
+	  });
+	});
+	Promise.all(promises).then(function(scenes) {
+		$('#wrapper').prepend(sceneMenuTemplate({scenes:scenes,activeScene:activeScene}));
 	});
  }
 function makeFields(sourceId) {
@@ -271,6 +309,7 @@ function saveFields(sourceId) {
 				var result = re.exec(name);
 				return Scene.searchSourcesByName(result[1]);
 			}).then(function(sources){
+				console.log(sources);
 				sources.forEach(function(source,i){
 					source.getCustomName().then(function(name){
 						if(name == sourceCName){

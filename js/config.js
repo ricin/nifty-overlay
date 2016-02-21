@@ -1,8 +1,13 @@
-var xjs = require('xjs');
+/*var xjs = require('xjs');
 var Source = xjs.Source;
-var sourceWindow = xjs.SourcePluginWindow.getInstance();
+var sourceWindow = xjs.SourcePluginWindow.getInstance();*/
+
+var sourceName = 'butt' //temp until xjs integration
+
+var socket = io.connect('http://localhost');
+
 var mySource;
-var configObj = false;
+var configObj = {};
 var configDefDefault = {controls:false,resize:false,css:false,fields:[],groups:[]};
 var fieldsDefault = {label:"",type:"text",copy:false,tip:false,default:false,output:"",group:""};
 if(typeof configDef === 'undefined'){
@@ -12,7 +17,6 @@ if(typeof configDef === 'undefined'){
 }
 setConfigDefaults();
 setConfigObj() ;
-
 //Adobe Edge specific code
 if(typeof AdobeEdge !== 'undefined'){
 	AdobeEdge.bootstrapCallback(function (compId) {
@@ -70,23 +74,71 @@ $(function(){
 	
 	$('div[data-config*="\\"type\\":\\"number\\""]').click(function (e){
 		var field = $(this);
-		mySource.loadConfig().then(function(configObj) {
 			if(e.which==1){
 				configObj.data[field.data('index')] = parseInt(configObj.data[field.data('index')])+1;
 			}
 			else if(e.which==2){
 				configObj.data[field.data('index')] = parseInt(configObj.data[field.data('index')])-1;
 			}
-			mySource.saveConfig(configObj);
+			saveConfig(configObj);
 			updateFields(configObj);
-		});
 	});
 });
 //END load config from DOM
 
+function setConfigDefaults(){
+	if(configDef.fields.length > 0){
+		configMerge = $.extend({},configDefDefault, configDef);
+		configDef.fields.forEach(function(field,i){
+			configMerge.fields[i] = $.extend({},fieldsDefault, field);
+		});
+		configDef = configMerge;
+	}
+}
 
+function setConfigObj(){
+	socket.emit('xsplit_init', sourceName, function(initObj){
+		configObj.configDef = configDef;
+		if(typeof initObj.data !== 'undefined'){
+			configObj.data = initObj.data;
+		}
+		else {
+				configObj.data = [];
+				configDef.fields.forEach(function(value,i){
+					if(typeof value.default !== 'undefined'){
+						configObj.data[i] = value.default;
+					}
+					else {
+						configObj.data[i] = "";
+					}
+				});
+		}
+	  socket.emit('xsplit_def', {'source':sourceName,'def':configDef});
+	  saveConfig(configObj);
+	  updateFields(configObj);
+  });
+}
 
-function setConfigObj() { 
+function updateFields(configObj){
+	configObj.data.forEach(function (value, i){
+		if($.isFunction(window[configDef.fields[i].output])){
+			window[configDef.fields[i].output](value,configDef.fields[i]);
+		}
+		else {
+			$(configDef.fields[i].output).html(value);
+		}
+		
+	});
+}
+function saveConfig(configObj){
+	  socket.emit('xsplit_update', {'source':sourceName,'data':configObj.data});
+}
+socket.on(sourceName, function(data){
+    configObj.data = data;
+    updateFields(configObj);
+});
+
+/*function setConfigObj() { 
 	 xjs.ready()
 	  .then(Source.getCurrentSource)
 	  .then(function(source) {
@@ -120,15 +172,7 @@ sourceWindow.on('apply-config', function(configObj) {
 	window[configObj.control]();
 });
 
-function setConfigDefaults(){
-	if(configDef.fields.length > 0){
-		configMerge = $.extend({},configDefDefault, configDef);
-		configDef.fields.forEach(function(field,i){
-			configMerge.fields[i] = $.extend({},fieldsDefault, field);
-		});
-		configDef = configMerge;
-	}
-}
+
 
 function updateFields(configObj){
 	configObj.data.forEach(function (value, i){
@@ -168,7 +212,7 @@ function updateFields(configObj){
 	if (typeof configReady === "function") {
         	configReady();
 	}
-}
+}*/
 
 String.prototype.toProperCase = function () {
     return this.replace(/\w\S*/g, function(txt){return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase();});

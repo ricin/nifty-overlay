@@ -1,6 +1,6 @@
 <html>
 <head>
-<script type="text/javascript" src="https://getfirebug.com/firebug-lite.js#startOpened"></script>
+<!--<script type="text/javascript" src="https://getfirebug.com/firebug-lite.js#startOpened"></script>-->
 <script src="http://localhost/socket.io/socket.io.js"></script>
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.4/jquery.min.js"></script>
 <script src="js/jquery.serialize-object.min.js"></script>
@@ -62,7 +62,7 @@ var extensionWindow = xjs.ExtensionWindow.getInstance();
 var Source = xjs.Source;
 var Scene = xjs.Scene;
 
-var sourceName = 'butt' //temp until xjs integration
+var sourceName;
 
 var socket = io.connect('http://localhost');
 
@@ -73,19 +73,27 @@ configObj.data = [];
 var configDef;
 var activeScene;
 
-function initConfigExtension(){
-	socket.emit('xsplit_init', sourceName, function(initObj){
-		configObj = initObj;
-		configDef = configObj.configDef;
-		makeFields(sourceId);
-		if(configDef.controls) {
-			makeControls();
-		}
-		if(configDef.resize || configDef.css) {
-			makeDisplay();
-		}
-		updateFields(configObj,sourceId);
+function initConfigExtension(sources){
+$('#wrapper').empty();
+makeSceneMenu();
+	_.forIn(sources,function(id,name){
+		sourceName = name;
+		sourceId = id;
+		socket.emit('xsplit_init', sourceName, function(initObj){
+		console.log(initObj);
+			configObj = initObj;
+			configDef = configObj.configDef;
+			makeFields(sourceId);
+			if(configDef.controls) {
+				makeControls();
+			}
+			if(configDef.resize || configDef.css) {
+				makeDisplay();
+			}
+			updateFields(configObj,sourceId);
+		});
 	});
+
 }
 
 function saveFields(sourceId) {
@@ -141,7 +149,8 @@ if(xjs.Environment.isSourceConfig()){
 	});
 }
 else {
-initConfigExtension();
+makeSceneMenu();
+//initConfigExtension();
 }
 
 socket.on('xsplit_scene_info', function(sceneId,fn){
@@ -264,8 +273,8 @@ $(function(){
 	$('body').on('change','#scene_menu',function(event){
 		event.preventDefault();
 		activeScene = $(this).val();
-		xjs.ready().then(function(){
-			initConfigExtension(Scene.getById(activeScene));
+		socket.emit('xsplit_set_scene', activeScene, function(sceneObj){
+			initConfigExtension(sceneObj.sources);
 		});
 	});
  });
@@ -277,6 +286,12 @@ $(function(){
 	});
  }
  function makeSceneMenu(){
+ 	var sceneMenuTemplate = _.template($("#scene-menu_template").html());
+	socket.emit('xsplit_scene_list', '', function(scenes){
+		$('#wrapper').prepend(sceneMenuTemplate({scenes:scenes,activeScene:activeScene}));
+	});
+ }
+ /*function makeSceneMenu(){
  	var sceneMenuTemplate = _.template($("#scene-menu_template").html());
 	var sceneNumbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 	var promises = sceneNumbers.map(function(number) {
@@ -290,7 +305,7 @@ $(function(){
 	Promise.all(promises).then(function(scenes) {
 		$('#wrapper').prepend(sceneMenuTemplate({scenes:scenes,activeScene:activeScene}));
 	});
- }
+ }*/
 function makeFields(sourceId) {
 	var formTemplate = _.template($("#form_template").html());
 	$('#wrapper').append(formTemplate({sourceId:sourceId}));

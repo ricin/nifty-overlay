@@ -1,5 +1,6 @@
 var xjs = require('xjs');
 var Source = xjs.Source;
+var Scene = xjs.Scene;
 var sourceWindow = xjs.SourcePluginWindow.getInstance();
 
 var socket = io.connect('http://localhost');
@@ -88,19 +89,17 @@ xjs.ready()
 .then(Source.getCurrentSource)
 .then(function(source){
 	mySource = source;
-	return source.getCustomName()
-}).then(function(name){
-	sourceName = name;
-	
-	setConfigDefaults();
-	setConfigObj() ;
-	
-	socket.on(sourceName, function(data){
-		configObj.data = data;
-		updateFields(configObj);
-	});
-	
+	Promise.all([mySource.getId(),mySource.getCustomName()]).then(function(values){
+		sourceId = values[0];
+		sourceName = values[1];
+		setConfigDefaults();
+		setConfigObj() ;
 
+		socket.on(sourceName, function(data){
+			configObj.data = data;
+			updateFields(configObj);
+		});
+	});
 });
 
 function setConfigDefaults(){
@@ -115,6 +114,21 @@ function setConfigDefaults(){
 
 function setConfigObj(){
 	socket.emit('xsplit_init', sourceName, function(initObj){
+		var sceneId;
+		var sceneName;
+		var sceneInfo = {};
+		mySource.getSceneId().then(function(id){
+			sceneId = id;
+			return Scene.getById(id).getName();
+		}).then(function(name){
+			sceneName = name;
+			
+			sceneInfo[sceneId] = {'name':sceneName,sources:{}};
+			sceneInfo[sceneId]['sources'][sourceName] = sourceId;
+			console.log(sceneInfo);
+			socket.emit('xsplit_def', {'source':sourceName,'def':configDef,'scene':sceneInfo});
+		});
+		
 		configObj.configDef = configDef;
 		if(typeof initObj.data !== 'undefined'){
 			configObj.data = initObj.data;
@@ -130,7 +144,7 @@ function setConfigObj(){
 					}
 				});
 		}
-	  socket.emit('xsplit_def', {'source':sourceName,'def':configDef});
+
 	  saveConfig(configObj);
 	  mySource.saveConfig(configObj);
 	  updateFields(configObj);

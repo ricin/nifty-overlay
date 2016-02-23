@@ -1,11 +1,10 @@
-/*var xjs = require('xjs');
+var xjs = require('xjs');
 var Source = xjs.Source;
-var sourceWindow = xjs.SourcePluginWindow.getInstance();*/
-
-var sourceName = 'butt' //temp until xjs integration
+var sourceWindow = xjs.SourcePluginWindow.getInstance();
 
 var socket = io.connect('http://localhost');
 
+var sourceName;
 var mySource;
 var configObj = {};
 var configDefDefault = {controls:false,resize:false,css:false,fields:[],groups:[]};
@@ -15,8 +14,7 @@ if(typeof configDef === 'undefined'){
 	configDef.fields = [];
 	configDef.groups = [];
 }
-setConfigDefaults();
-setConfigObj() ;
+
 //Adobe Edge specific code
 if(typeof AdobeEdge !== 'undefined'){
 	AdobeEdge.bootstrapCallback(function (compId) {
@@ -86,6 +84,25 @@ $(function(){
 });
 //END load config from DOM
 
+xjs.ready()
+.then(Source.getCurrentSource)
+.then(function(source){
+	mySource = source;
+	return source.getCustomName()
+}).then(function(name){
+	sourceName = name;
+	
+	setConfigDefaults();
+	setConfigObj() ;
+	
+	socket.on(sourceName, function(data){
+		configObj.data = data;
+		updateFields(configObj);
+	});
+	
+
+});
+
 function setConfigDefaults(){
 	if(configDef.fields.length > 0){
 		configMerge = $.extend({},configDefDefault, configDef);
@@ -115,6 +132,7 @@ function setConfigObj(){
 		}
 	  socket.emit('xsplit_def', {'source':sourceName,'def':configDef});
 	  saveConfig(configObj);
+	  mySource.saveConfig(configObj);
 	  updateFields(configObj);
   });
 }
@@ -133,10 +151,13 @@ function updateFields(configObj){
 function saveConfig(configObj){
 	  socket.emit('xsplit_update', {'source':sourceName,'data':configObj.data});
 }
-socket.on(sourceName, function(data){
-    configObj.data = data;
-    updateFields(configObj);
+
+sourceWindow.on('save-config', function(configObj) {
+	configObj.configDef = configDef;
+  mySource.saveConfig(configObj);
+  updateFields(configObj);
 });
+
 
 /*function setConfigObj() { 
 	 xjs.ready()

@@ -1,13 +1,13 @@
 <html>
 <head>
-<!--<script type="text/javascript" src="https://getfirebug.com/firebug-lite.js#startOpened"></script>-->
+<script type="text/javascript" src="https://getfirebug.com/firebug-lite.js#startOpened"></script>
 <script src="http://localhost/socket.io/socket.io.js"></script>
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.4/jquery.min.js"></script>
 <script src="js/jquery.serialize-object.min.js"></script>
 <script src="js/lodash.min.js"></script>
-<!--<script src="js/xjs.js"></script>-->
+<script src="js/xjs.js"></script>
 
-<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.5.0/css/font-awesome.min.css">
+<!--<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.5.0/css/font-awesome.min.css">-->
 
 <script>
 var inputTemplate = {};
@@ -56,24 +56,22 @@ Scene: <select id="scene_menu">
 </script>
 
   <script>
-/*var xjs = require('xjs');
+var xjs = require('xjs');
 var propsWindow = xjs.SourcePropsWindow.getInstance();
 var extensionWindow = xjs.ExtensionWindow.getInstance();
 var Source = xjs.Source;
-var Scene = xjs.Scene;*/
+var Scene = xjs.Scene;
 
 var sourceName = 'butt' //temp until xjs integration
 
 var socket = io.connect('http://localhost');
 
 var mySource;
-var sourceId = '12345' //temp until xjs integration
+var sourceId;
 var configObj = {};
 configObj.data = [];
 var configDef;
 var activeScene;
-
-initConfigExtension();
 
 function initConfigExtension(){
 	socket.emit('xsplit_init', sourceName, function(initObj){
@@ -102,14 +100,8 @@ function saveFields(sourceId) {
 	
 	socket.emit('xsplit_update', {'source':sourceName,'data':configObj.data});
 }
-
-socket.on(sourceName, function(data){
-    configObj.data = data;
-    updateFields(configObj,sourceId);
-});
-
  
-/*if(xjs.Environment.isSourceConfig()){
+if(xjs.Environment.isSourceConfig()){
 	xjs.ready()
 	.then(function() {
 		propsWindow.useTabbedWindow({
@@ -119,14 +111,19 @@ socket.on(sourceName, function(data){
 	}).then(Source.getCurrentSource)
 	.then(function(source) {
 		mySource = source;
-		return mySource.getId();
-	})
-	.then(function(myId){
-		sourceId = myId;
+		Promise.all([mySource.getId(),mySource.getCustomName()]).then(function(values){
+			sourceId = values[0];
+			sourceName = values[1];
+		
+			socket.on(sourceName, function(data){
+				configObj.data = data;
+				updateFields(configObj,sourceId);
+			});
+		});
 		return mySource.loadConfig();
 	}).then(function(config) {
 		configObj = config;
-		configDef = configObj.configDef;
+		configDef = config.configDef;
 		makeFields(sourceId);
 		if(configDef.controls) {
 			makeControls();
@@ -134,20 +131,28 @@ socket.on(sourceName, function(data){
 		if(configDef.resize || configDef.css) {
 			makeDisplay();
 		}
-		if(configObj.data.length == 0){
-			configDef.fields.forEach(function(field,i){
-				if(typeof field.default !== 'undefined'){
-					configObj.data[i] = field.default;
-				}
-				else {
-					configObj.data[i] = "";
-				}
-			});
-		}
-		updateFields(configObj,sourceId);
+		socket.emit('xsplit_init', sourceName, function(initObj){
+			if(typeof initObj.data !== 'undefined'){
+			configObj.data = initObj.data;
+			}
+			updateFields(configObj,sourceId);
+		});
+
 	});
 }
-if(xjs.Environment.isExtension()){
+else {
+initConfigExtension();
+}
+
+socket.on('xsplit_scene_info', function(sceneId,fn){
+	myscene = Scene.getById(sceneId);
+	myscene.getSources().then(function(sources){
+		fn('wwww');
+	})
+});
+
+
+/*if(xjs.Environment.isExtension()){
 	xjs.ready().then(function(){
 		Scene.getActiveScene().then(function(scene){
 			scene.getSceneNumber().then(function(num) {

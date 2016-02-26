@@ -64,7 +64,7 @@ var Scene = xjs.Scene;
 
 var sourceName;
 
-var socket = io.connect('http://localhost');
+var socket = io.connect('http://localhost',{query:'type=config'});
 
 var mySource;
 var sourceId;
@@ -75,10 +75,11 @@ var activeScene;
 
 function initConfigExtension(sources){
 $('#wrapper').empty();
-makeSceneMenu();
-	_.forIn(sources,function(id,name){
-		sourceName = name;
-		sourceId = id;
+socket.emit('xsplit_info',{request:'list_scenes'});
+	_.forIn(sources,function(source){
+		sourceName = source.name;
+		sourceId = source.id;
+		console.log(source);
 		socket.emit('xsplit_init', sourceName, function(initObj){
 		console.log(initObj);
 			configObj = initObj;
@@ -149,15 +150,17 @@ if(xjs.Environment.isSourceConfig()){
 	});
 }
 else {
-makeSceneMenu();
+socket.emit('xsplit_info',{request:'list_scenes'});
 //initConfigExtension();
 }
 
-socket.on('xsplit_scene_info', function(sceneId,fn){
-	myscene = Scene.getById(sceneId);
-	myscene.getSources().then(function(sources){
-		fn('wwww');
-	})
+socket.on('xsplit_info_receive', function(msg){
+	if(msg.request == 'list_scenes'){
+		makeSceneMenu(msg.scenes,msg.activeScene);
+	}
+	if(msg.request == 'get_scene'){
+		initConfigExtension(msg.sources);
+	}
 });
 
 
@@ -272,10 +275,8 @@ $(function(){
 	});
 	$('body').on('change','#scene_menu',function(event){
 		event.preventDefault();
-		activeScene = $(this).val();
-		socket.emit('xsplit_set_scene', activeScene, function(sceneObj){
-			initConfigExtension(sceneObj.sources);
-		});
+		var scene = $(this).val();
+		socket.emit('xsplit_info', {request:'get_scene',sceneNum:scene});
 	});
  });
  
@@ -285,11 +286,9 @@ $(function(){
 		$('form[data-id="'+sourceId+'"] .custom_fields').append(groupTemplate({group:group}));
 	});
  }
- function makeSceneMenu(){
+ function makeSceneMenu(scenes, activeScene){
  	var sceneMenuTemplate = _.template($("#scene-menu_template").html());
-	socket.emit('xsplit_scene_list', '', function(scenes){
-		$('#wrapper').prepend(sceneMenuTemplate({scenes:scenes,activeScene:activeScene}));
-	});
+	$('#wrapper').prepend(sceneMenuTemplate({scenes:scenes,activeScene:activeScene}));
  }
  /*function makeSceneMenu(){
  	var sceneMenuTemplate = _.template($("#scene-menu_template").html());

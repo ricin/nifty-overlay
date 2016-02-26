@@ -3,10 +3,11 @@ var Source = xjs.Source;
 var Scene = xjs.Scene;
 var sourceWindow = xjs.SourcePluginWindow.getInstance();
 
-var socket = io.connect('http://localhost');
+var socket = io.connect('http://localhost',{query:'type=source'});
 
 var sourceName;
 var mySource;
+var activeScene;
 var configObj = {};
 var configDefDefault = {controls:false,resize:false,css:false,fields:[],groups:[]};
 var fieldsDefault = {label:"",type:"text",copy:false,tip:false,default:false,output:"",group:""};
@@ -85,10 +86,14 @@ $(function(){
 });
 //END load config from DOM
 
-xjs.ready()
-.then(Source.getCurrentSource)
+xjs.ready().then(Source.getCurrentSource)
 .then(function(source){
 	mySource = source;
+	Scene.getActiveScene().then(function(scene){
+		scene.getSceneNumber().then(function(num) {
+		activeScene = num;
+		});
+	});
 	Promise.all([mySource.getId(),mySource.getCustomName()]).then(function(values){
 		sourceId = values[0];
 		sourceName = values[1];
@@ -122,11 +127,8 @@ function setConfigObj(){
 			return Scene.getById(id).getName();
 		}).then(function(name){
 			sceneName = name;
-			
-			sceneInfo[sceneId] = {'name':sceneName,sources:{}};
-			sceneInfo[sceneId]['sources'][sourceName] = sourceId;
-			console.log(sceneInfo);
-			socket.emit('xsplit_def', {'source':sourceName,'def':configDef,'scene':sceneInfo});
+
+			socket.emit('xsplit_def', {'source':sourceName,'def':configDef});
 		});
 		
 		configObj.configDef = configDef;
@@ -170,6 +172,48 @@ sourceWindow.on('save-config', function(configObj) {
 	configObj.configDef = configDef;
   mySource.saveConfig(configObj);
   updateFields(configObj);
+});
+
+socket.on('xsplit_info_get',function(msg){
+	
+	if(msg.request == 'list_scenes'){
+		var sceneNumbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+		var promises = sceneNumbers.map(function(number) {
+		  return new Promise(function(resolve) {
+			Scene.getById(number).getName().then(function(name) {
+			var scene = {name:name,num:number};
+			  resolve(scene);
+			});
+		  });
+		});
+		Promise.all(promises).then(function(scenes) {
+			msg.scenes = scenes;
+			msg.activeScene = activeScene;
+			console.log(msg);
+			socket.emit('xsplit_info_send',msg);
+		});
+	}
+	if(msg.request == 'get_scene'){
+		var scene = Scene.getById(msg.sceneNum);
+		scene.getSources().then(function(sources){
+			var promises = sources.map(function(mySource) {
+				return new Promise(function(resolve) {
+					Promise.all([mySource.getId(),mySource.getCustomName()]).then(function(values){
+						var source = {id:values[0],name:values[1]};
+						console.log(source);
+						resolve(source);
+					});
+				});
+			});
+		
+			Promise.all(promises).then(function(sources) {
+				console.log(sources);
+				msg.sources = sources;
+				socket.emit('xsplit_info_send',msg);
+			});
+		});
+	}
+	
 });
 
 

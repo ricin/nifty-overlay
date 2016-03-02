@@ -6,6 +6,7 @@ var sourceWindow = xjs.SourcePluginWindow.getInstance();
 var socket = io.connect('http://localhost',{query:'type=source'});
 
 var sourceName;
+var sourceId;
 var mySource;
 var activeScene;
 var configObj = {};
@@ -86,6 +87,10 @@ $(function(){
 });
 //END load config from DOM
 
+function SetVolume(){}
+function GetPlayState(){};
+function OnSceneLoad(){};
+
 xjs.ready().then(Source.getCurrentSource)
 .then(function(source){
 	mySource = source;
@@ -118,7 +123,7 @@ function setConfigDefaults(){
 }
 
 function setConfigObj(){
-	socket.emit('xsplit_init', sourceName, function(initObj){
+	socket.emit('xsplit_init', {name:sourceName,id:sourceId}, function(msg){
 		var sceneId;
 		var sceneName;
 		var sceneInfo = {};
@@ -132,8 +137,8 @@ function setConfigObj(){
 		});
 		
 		configObj.configDef = configDef;
-		if(typeof initObj.data !== 'undefined'){
-			configObj.data = initObj.data;
+		if(typeof msg.initObj.data !== 'undefined'){
+			configObj.data = msg.initObj.data;
 		}
 		else {
 				configObj.data = [];
@@ -175,26 +180,24 @@ sourceWindow.on('save-config', function(configObj) {
 });
 
 socket.on('xsplit_info_get',function(msg){
-	
 	if(msg.request == 'list_scenes'){
-		var sceneNumbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-		var promises = sceneNumbers.map(function(number) {
-		  return new Promise(function(resolve) {
-			Scene.getById(number).getName().then(function(name) {
-			var scene = {name:name,num:number};
-			  resolve(scene);
+		mySource.getSceneId().then(function(id){
+			Scene.getById(id).getName().then(function(name) {
+				msg.scene = {name:name,num:id};
+				socket.emit('xsplit_info_send',msg);
 			});
-		  });
-		});
-		Promise.all(promises).then(function(scenes) {
-			msg.scenes = scenes;
-			msg.activeScene = activeScene;
-			console.log(msg);
-			socket.emit('xsplit_info_send',msg);
 		});
 	}
-	if(msg.request == 'get_scene'){
-		var scene = Scene.getById(msg.sceneNum);
+	if(msg.request == 'get_scene_sources'){
+		mySource.getSceneId().then(function(sceneNum){
+			if(msg.sceneNum == sceneNum){
+				Promise.all([mySource.getId(),mySource.getCustomName()]).then(function(values){
+					msg.source = {id:values[0],name:values[1]};
+					socket.emit('xsplit_info_send',msg);
+				});
+			}
+		});
+		/*var scene = Scene.getById(msg.sceneNum);
 		scene.getSources().then(function(sources){
 			var promises = sources.map(function(mySource) {
 				return new Promise(function(resolve) {
@@ -211,7 +214,7 @@ socket.on('xsplit_info_get',function(msg){
 				msg.sources = sources;
 				socket.emit('xsplit_info_send',msg);
 			});
-		});
+		});*/
 	}
 	
 });

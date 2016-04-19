@@ -1,20 +1,37 @@
 <html>
 <head>
 <!--<script type="text/javascript" src="https://getfirebug.com/firebug-lite.js#startOpened"></script>-->
-<script src="http://localhost/socket.io/socket.io.js"></script>
+<script src="/socket.io/socket.io.js"></script>
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.4/jquery.min.js"></script>
+<script src="js/promise.min.js"></script>
 <script src="js/jquery.serialize-object.min.js"></script>
 <script src="js/lodash.min.js"></script>
 <script src="js/xjs.js"></script>
 
-<!--<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.5.0/css/font-awesome.min.css">-->
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.5.0/css/font-awesome.min.css">
+<script>
+var qd = {};
+location.search.substr(1).split("&").forEach(function(item) {var s = item.split("="), k = s[0], v = s[1] && decodeURIComponent(s[1]); (k in qd) ? qd[k].push(v) : qd[k] = [v]});
+
+if(typeof qd.view != 'undefined'){
+	if(qd.view == 'mobile'){
+		$('head').append( $('<link rel="stylesheet" type="text/css" />').attr('href', 'css/mobile.css') );
+		$.getScript('js/mobile.js');
+	}
+}
+else {
+		$('head').append( $('<link rel="stylesheet" type="text/css" />').attr('href', 'css/default.css') );
+}
+</script>
 
 <script>
 var inputTemplate = {};
 inputTemplate.text = _.template('<span><input name="<%=name%>" id="<%=id%>" type="text"></span>');
 inputTemplate.textarea = _.template('<span><textarea name="<%=name%>" id="<%=id%>"></textarea></span>');
-inputTemplate.number = _.template('<span><input name="<%=name%>" id="<%=id%>" type="number"></span>');
+inputTemplate.number = _.template('<span><input name="<%=name%>" id="<%=id%>" type="number" data-type="spinbox"></span>');
 inputTemplate.image = _.template('<span><input class="image_field" name="<%=name%>" id="<%=id%>" type="text"><button class="local_image"><i class="fa fa-folder-open"></i></button></span>');
+inputTemplate.hideshow = _.template('<span><button class="hideshow">Hide</button> <input type="hidden" class="hideshow" name="<%=name%>" id="<%=id%>" value="true"/> </span>');
+
 </script>
 
 <script id="form_template" type="text/template">
@@ -32,7 +49,7 @@ inputTemplate.image = _.template('<span><input class="image_field" name="<%=name
 </script>
 
 <script id="field_template" type="text/template">
-	<div id="field-<%= i %>" class="field">
+	<div id="field-<%= i %>" class="field <%= field.view%>">
 		<label for="<%= field.name %>"><%= field.label %></label>
 		 <% if(field.tip) { %>
 			<div class="tip_link">?<div class="tip_text"><div class="tip_link">?</div><h3><%= field.label%></h3><p><%= field.tip%></p></div></div>
@@ -68,7 +85,7 @@ var Source = xjs.Source;
 var Scene = xjs.Scene;
 
 
-var socket = io.connect('http://localhost',{query:'type=config'});
+var socket = io.connect('',{query:'type=config'});
 
 var mySource;
 var configObjs = {};
@@ -289,6 +306,25 @@ $(function(){
 		initConfigExtension(scene);
 		socket.emit('xsplit_info', {request:'get_scene_sources',sceneNum:scene});
 	});
+	$('body').on('click','button.hideshow',function(event){
+		event.preventDefault();
+		var showhide_input = $(this).next('input.hideshow')
+		var show = (showhide_input.val()==='true');
+
+		showhide_input.val((!show));
+		
+		var sourceId = $(this).parents('form').data('id');
+		var sourceName = $(this).parents('form').data('name');
+		
+		saveFields(sourceId,sourceName);
+		updateFields(configObjs, sourceId)
+		
+	});
+	$('body').on('click','#reset',function(event){
+		event.preventDefault();
+		socket.emit('clear_storage');
+	});
+	
  });
  
  function makeGroups(sourceId) {
@@ -308,21 +344,7 @@ $(function(){
 		sceneOption.prop('disabled',false);
 	}
  }
- /*function makeSceneMenu(){
- 	var sceneMenuTemplate = _.template($("#scene-menu_template").html());
-	var sceneNumbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-	var promises = sceneNumbers.map(function(number) {
-	  return new Promise(function(resolve) {
-		Scene.getById(number).getName().then(function(name) {
-		var scene = {name:name,num:number};
-		  resolve(scene);
-		});
-	  });
-	});
-	Promise.all(promises).then(function(scenes) {
-		$('#wrapper').prepend(sceneMenuTemplate({scenes:scenes,activeScene:activeScene}));
-	});
- }*/
+
 function makeFields(sourceId,sourceName) {
 	var formTemplate = _.template($("#form_template").html());
 	$('#wrapper').append(formTemplate({sourceId:sourceId,sourceName:sourceName}));
@@ -336,9 +358,12 @@ function makeFields(sourceId,sourceName) {
 		} 
 		var fieldTemplate = _.template($("#field_template").html());
 		$('form[data-id="'+sourceId+'"] .custom_fields '+field.group).append(fieldTemplate({inputTemplate:inputTemplate,field:field,i:i}));
-			
 	});
-	$('form[data-id="'+sourceId+'"] .custom_fields').append('<div class="buttons"><button class="configSubmit" value="Save" >Save</button></div>');
+	if(typeof fieldsLoaded == "function"){
+		fieldsLoaded();
+	}
+	//$('form[data-id="'+sourceId+'"] .custom_fields').append('<div class="buttons"><button class="configSubmit" value="Save" >Save</button></div>');
+	$('<button id="reset" />').text('Reset All to default').appendTo('#wrapper');
 }
 
 function makeCopyField(id, sourceId){
@@ -440,6 +465,7 @@ function makeDisplay(){
 }*/
 
 function updateFields(configObjs, sourceId){
+
 	configObjs[sourceId].data.forEach(function (value, i){
 		if(typeof value === 'object'){
 			value.forEach(function(sub,num){
@@ -455,6 +481,13 @@ function updateFields(configObjs, sourceId){
 		}
 		else{
 			$('form[data-id="'+sourceId+'"] #data-'+i).val(value);
+			if($('form[data-id="'+sourceId+'"] #data-'+i).hasClass('hideshow')){
+					var label = (value=='true'?'Hide':'Show');
+
+					$('form[data-id="'+sourceId+'"] #data-'+i).prev('button.hideshow').html(label);
+			}
+			
+
 		}	
 	});
 	if(configDef.resize) {
@@ -466,38 +499,9 @@ function updateFields(configObjs, sourceId){
 	}
 }
 
-	
+
+
   </script>
-  <style>
-  * { -webkit-box-sizing: border-box; outline:0}
-            html { font-family:Arial, Verdana, Helvetica, sans-serif; text-align:left; background:#313131; border:none; outline:none; margin:0; padding:0; white-space:nowrap }
-			body { position:relative; font-family:inherit; display:block;font-size:12px; color:#ccc; margin:10px 0 0 0; padding:0 }
-			fieldset {position:relative;background-color:#212121;border:1px solid #999; color:#ccc;text-align:left; margin:32px 2px 2px 2px; padding:2px;}
-			legend {position:absolute;top: -20px;}
-			label { display:inline-block; font-size:11px; margin:0; padding:0 5px 0 0; width:76px;text-align:right;vertical-align:text-top}
-			.tip_link {position:relative;display:inline-block; width:15px;height:15px;background-color:#393939;color:#000;font-weight:bold;text-align:center;margin:0 3px 0 0;vertical-align:middle;border:1px solid #000;}
-			.tip_text {cursor:help;z-index:100;position:absolute;top:-3px; left:-3px;background:#000;color:#ccc;display:none;padding:3px;width:250px;max-height:120px;font-weight:normal;text-align:left;white-space:normal;}
-			.tip_text h3 {display:inline-block;color:#0096d6;font-weight:bold;margin:0;padding:0}
-			.tip_text .tip_link {display:inline-block;background-color:#0096d6;padding:0;margin:0 3px 0 0;vertical-align:top;}
-			.tip_link:hover .tip_text {display:block;}
-			.field_wrap {display:inline-block;width:auto;white-space:normal;vertical-align:top;}
-			.field_wrap span {position:relative;}
-			input[type=text],input[type=number],textarea {font-family:Arial, Verdana, Helvetica, sans-serif;background-color:#393939;border:1px solid #000;color:#999; padding:3px;width:197px;margin:0 0 2px 0;}
-			input[type=number]{width:50px;}
-			input.image_field {padding:3px 30px 3px 3px;}
-			input::-webkit-inner-spin-button {opacity: 1;}
-			#display input[type=text]{display:inline-block;font-family:Arial, Verdana, Helvetica, sans-serif;background-color:#393939;border:1px solid #000;color:#999; padding:3px;width:60px;}
-			textarea {height:80px;vertical-align:bottom;resize:vertical;}
-}
-			input:focus, textarea:focus {background-color:#4c4c4c; border:1px solid #000;}
-			.field {padding:3px 0;float:left;}
-			button {background-color:#000;border:1px solid #555;color:#fff;font-size:11px;padding:0 5px;margin:0 0 2px 2px;height:23px;}
-			button:hover {background-color:#043151;border-color:#fff;cursor:pointer}
-			button.copy_field {vertical-align:bottom;margin:0 0 2px 0;}
-			button.local_image {font-size:9px; height:16px; position:absolute;top:-1px;left:168px;}
-			.buttons {text-align:right;clear:both;}
-			.buttons button {text-align:right;clear:both; margin:5px;}
- </style>
 </head>
 <body>
 <div id="wrapper"></div>

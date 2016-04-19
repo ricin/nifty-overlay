@@ -1,0 +1,509 @@
+<html>
+<head>
+<!--<script type="text/javascript" src="https://getfirebug.com/firebug-lite.js#startOpened"></script>-->
+<script src="/socket.io/socket.io.js"></script>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.4/jquery.min.js"></script>
+<script src="js/promise.min.js"></script>
+<script src="js/jquery.serialize-object.min.js"></script>
+<script src="js/lodash.min.js"></script>
+<script src="js/xjs.js"></script>
+
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.5.0/css/font-awesome.min.css">
+<script>
+var qd = {};
+location.search.substr(1).split("&").forEach(function(item) {var s = item.split("="), k = s[0], v = s[1] && decodeURIComponent(s[1]); (k in qd) ? qd[k].push(v) : qd[k] = [v]});
+
+if(typeof qd.view != 'undefined'){
+	if(qd.view == 'mobile'){
+		$('head').append( $('<link rel="stylesheet" type="text/css" />').attr('href', 'css/mobile.css') );
+		$.getScript('js/mobile.js');
+	}
+}
+else {
+		$('head').append( $('<link rel="stylesheet" type="text/css" />').attr('href', 'css/default.css') );
+}
+</script>
+
+<script>
+var inputTemplate = {};
+inputTemplate.text = _.template('<span><input name="<%=name%>" id="<%=id%>" type="text"></span>');
+inputTemplate.textarea = _.template('<span><textarea name="<%=name%>" id="<%=id%>"></textarea></span>');
+inputTemplate.number = _.template('<span><input name="<%=name%>" id="<%=id%>" type="number" data-type="spinbox"></span>');
+inputTemplate.image = _.template('<span><input class="image_field" name="<%=name%>" id="<%=id%>" type="text"><button class="local_image"><i class="fa fa-folder-open"></i></button></span>');
+inputTemplate.hideshow = _.template('<span><button class="hideshow">Hide</button> <input type="hidden" class="hideshow" name="<%=name%>" id="<%=id%>" value="true"/> </span>');
+
+</script>
+
+<script id="form_template" type="text/template">
+	<form class="custom_form" data-id="<%= sourceId %>" data-name="<%=sourceName%>">
+		<fieldset class="custom_fields">
+			<legend><%=sourceName%></legend>
+		</fieldset>
+	</form>
+</script>
+
+<script id="group_template" type="text/template">
+		<fieldset id="<%= group.id %>">
+			<legend><%= group.label %></legend>
+		</fieldset>
+</script>
+
+<script id="field_template" type="text/template">
+	<div id="field-<%= i %>" class="field <%= field.view%>">
+		<label for="<%= field.name %>"><%= field.label %></label>
+		 <% if(field.tip) { %>
+			<div class="tip_link">?<div class="tip_text"><div class="tip_link">?</div><h3><%= field.label%></h3><p><%= field.tip%></p></div></div>
+		<% } %>
+		<div class="field_wrap">
+		 <%= inputTemplate[field.type]({name:field.name,id:field.id}) %>
+		</div>
+	<% if(field.copy) { %>
+		<button class="copy_field" data-target-id="<%= i %>"><i class="fa fa-plus"></i></button>
+	<% } %>
+	</div>
+</script>
+<script id="scene-menu_template" type="text/template">
+Scene: <select id="scene_menu">
+<option value="0" disabled></option>
+	<% for(var i=1;i<=12;i++){ %>
+	<% var selected = '';
+	if(i==sceneNum){
+		var selected = ' selected';
+		}%>
+	<option value="<%=i%>"<%=selected%> disabled>
+		Scene <%=i%>
+	</option>
+	<% } %>
+	</select>
+</script>
+
+  <script>
+var xjs = require('xjs');
+var propsWindow = xjs.SourcePropsWindow.getInstance();
+var extensionWindow = xjs.ExtensionWindow.getInstance();
+var Source = xjs.Source;
+var Scene = xjs.Scene;
+
+
+var socket = io.connect('',{query:'type=config'});
+
+var mySource;
+var configObjs = {};
+var configDef;
+var activeScene;
+
+function initConfigExtension(sceneNum){
+	$('#wrapper').empty();
+	makeSceneMenu(sceneNum);
+	socket.emit('xsplit_info',{request:'list_scenes'});
+}
+function makeConfig(source){
+	socket.emit('xsplit_init', {name:source.name,id:source.id}, function(msg){
+		var sourceName = msg.name;
+		var sourceId = msg.id;
+		configObjs[sourceId] = msg.initObj;
+		configDef = configObjs[sourceId].configDef;
+		makeFields(sourceId,sourceName);
+		if(configDef.controls) {
+			makeControls();
+		}
+		if(configDef.resize || configDef.css) {
+			makeDisplay();
+		}
+		
+		socket.on(sourceName, function(data){
+			configObjs[sourceId].data = data;
+			updateFields(configObjs,sourceId);
+		});
+		updateFields(configObjs,sourceId);
+	});
+
+}
+
+function saveFields(sourceId,sourceName) {
+	var customData = $('form[data-id="'+sourceId+'"]').serializeObject();
+	configObjs[sourceId].data = customData.data;
+	if(configDef.resize) {
+		configObjs[sourceId].resolution = {w:$('#res_width').val(),h:$('#res_height').val()};
+	}
+	if(configDef.css){
+		configObjs[sourceId].css = $('#custom_css').val();
+	}
+	
+	socket.emit('xsplit_update', {'source':sourceName,'data':configObjs[sourceId].data});
+}
+ 
+if(xjs.Environment.isSourceConfig()){
+var sourceName;
+var sourceId;
+	xjs.ready()
+	.then(function() {
+		propsWindow.useTabbedWindow({
+			customTabs: ['Data'],
+			tabOrder: ['Data','Layout', 'Color', 'Transition']
+		});
+	}).then(Source.getCurrentSource)
+	.then(function(source) {
+		mySource = source;
+		Promise.all([mySource.getId(),mySource.getCustomName()]).then(function(values){
+			makeConfig({id:values[0],name:values[1]});
+		});
+	});
+		/*	socket.on(sourceName, function(data){
+				configObjs[sourceId].data = data;
+				updateFields(configObjs,sourceId);
+			});
+		});
+		return mySource.loadConfig();
+	}).then(function(config) {
+		configObjs[sourceId] = config;
+		configDef = config.configDef;
+		makeFields(sourceId,sourceName);
+		if(configDef.controls) {
+			makeControls();
+		}
+		if(configDef.resize || configDef.css) {
+			makeDisplay();
+		}
+		socket.emit('xsplit_init', {name:sourceName,id:sourceId}, function(msg){
+			if(typeof msg.initObj.data !== 'undefined'){
+			configObjs[sourceId].data = msg.initObj.data;
+			}
+			updateFields(configObjs,sourceId);
+		});
+
+	});*/
+}
+
+socket.on('xsplit_info_receive', function(msg){
+	if(msg.request == 'list_scenes'){
+		addToSceneMenu(msg.scene);
+	}
+	if(msg.request == 'get_scene_sources'){
+		makeConfig(msg.source);
+	}
+});
+
+
+/*if(xjs.Environment.isExtension()){
+	xjs.ready().then(function(){
+		Scene.getActiveScene().then(function(scene){
+			scene.getSceneNumber().then(function(num) {
+				activeScene = num;
+				initConfigExtension(scene);
+			});
+		});
+	});
+}
+extensionWindow.on('scene-load', function(sceneNum){
+	xjs.ready().then(function(){
+		Scene.getActiveScene().then(function(scene){
+			scene.getSceneNumber().then(function(num) {
+				activeScene = num;
+				initConfigExtension(scene);
+			});
+		});
+	});
+});
+
+
+function initConfigExtension(currentScene){
+$('#wrapper').empty();
+makeSceneMenu();
+Scene.initializeScenes().then(function(val) {
+	if(val===true) {
+		currentScene.getSources().then(function(sources){
+		sources.forEach(function(source,i){
+			var sourceId;
+			source.getType().then(function(type){
+
+				if(type == 8){
+				 source.getId().then(function(myId){
+					sourceId = myId;
+					return source.loadConfig();
+				 }).then(function(config){
+						if(typeof config.configDef !== 'undefined'){
+							configObjs[sourceId] = config;
+							configDef = configObjs[sourceId].configDef;
+							makeFields(sourceId);
+							if(configDef.controls) {
+								makeControls();
+							}
+							if(configObjs[sourceId].data.length == 0){
+								configDef.fields.forEach(function(field,i){
+									if(typeof field.default !== 'undefined'){
+										configObjs[sourceId].data[i] = field.default;
+									}
+									else {
+										configObjs[sourceId].data[i] = "";
+									}
+								});
+							}
+							updateFields(configObjs[sourceId], sourceId);
+						}
+					});
+				}
+			});
+		});
+	});
+	}
+	});
+}
+*/
+$(function(){
+	if(!xjs.Environment.isSourceConfig()){
+		initConfigExtension();
+	}
+	$('body').on('click','.configSubmit',function(event) {
+		event.preventDefault();
+		var sourceId = $(this).parents('form').data('id');
+		var sourceName = $(this).parents('form').data('name');
+		saveFields(sourceId,sourceName);
+	});
+	$("body").on("keypress", "input,textarea",function( event ) {
+		if ( event.which == 13 && !event.shiftKey) {
+			event.preventDefault();
+			var sourceId = $(this).parents('form').data('id');
+			var sourceName = $(this).parents('form').data('name');
+			saveFields(sourceId,sourceName);
+		}
+	});
+	$("body").on("change", "input,textarea",function( event ) {
+			var sourceId = $(this).parents('form').data('id');
+			var sourceName = $(this).parents('form').data('name');
+			saveFields(sourceId,sourceName);
+	});
+	$('body').on('click','#controls button',function(event){
+		configObjs[sourceId].control = $(this).data('targetFunc');
+		mySource.applyConfig(configObjs[sourceId]);
+	});
+	$('body').on('click','.local_image',function(event){
+		event.preventDefault();
+		var target = $(this).prevAll('input');
+		//var sourceId = $(this).parents('form').data('id');
+		xjs.IO.openFileDialog({fileMustExist:true},{name:"Image Files",extensions:['jpg','bmp','png','gif']}).then(function(path){
+			target.val(path[0]);
+		});
+	});
+	$('body').on('click','.copy_field',function(event){
+		event.preventDefault();
+		var id = $(this).data('targetId');
+		var sourceId = $(this).parents('form').data('id');
+		makeCopyField(id,sourceId);
+		renumberCopyField(id, sourceId);
+	});
+	$('body').on('click','.del_field',function(event){
+		event.preventDefault();
+		var id = $(this).data('targetId');
+		var num = $(this).data('fieldNum');
+		var sourceId = $(this).parents('form').data('id');
+		$('form[data-id="'+sourceId+'"] #data-'+id+'-'+num).parent('span').remove();
+		renumberCopyField(id, sourceId);
+	});
+	$('body').on('change','#scene_menu',function(event){
+		event.preventDefault();
+		var scene = $(this).val();
+		initConfigExtension(scene);
+		socket.emit('xsplit_info', {request:'get_scene_sources',sceneNum:scene});
+	});
+	$('body').on('click','button.hideshow',function(event){
+		event.preventDefault();
+		var showhide_input = $(this).next('input.hideshow')
+		var show = (showhide_input.val()==='true');
+
+		showhide_input.val((!show));
+		
+		var sourceId = $(this).parents('form').data('id');
+		var sourceName = $(this).parents('form').data('name');
+		
+		saveFields(sourceId,sourceName);
+		updateFields(configObjs, sourceId)
+		
+	});
+	$('body').on('click','#reset',function(event){
+		event.preventDefault();
+		socket.emit('clear_storage');
+	});
+	
+ });
+ 
+ function makeGroups(sourceId) {
+	_.forEach(configDef.groups,function(group, i){
+		var groupTemplate = _.template($("#group_template").html());
+		$('form[data-id="'+sourceId+'"] .custom_fields').append(groupTemplate({group:group}));
+	});
+ }
+ function makeSceneMenu(sceneNum){
+ var sceneMenuTemplate = _.template($("#scene-menu_template").html());
+	$('#wrapper').prepend(sceneMenuTemplate({sceneNum:sceneNum}));
+ }
+  function addToSceneMenu(scene){
+	var sceneOption = $("#scene_menu option[value='"+scene.num+"']");
+	if(sceneOption.prop('disabled')){
+		sceneOption.html(scene.name);
+		sceneOption.prop('disabled',false);
+	}
+ }
+
+function makeFields(sourceId,sourceName) {
+	var formTemplate = _.template($("#form_template").html());
+	$('#wrapper').append(formTemplate({sourceId:sourceId,sourceName:sourceName}));
+	makeGroups(sourceId);
+	_.forEach(configDef.fields,function(field, i){
+		field.id = 'data-'+i;
+		field.name = 'data['+i+']';
+		if(field.copy){
+			field.id += '-0';
+			field.name += '[0]';
+		} 
+		var fieldTemplate = _.template($("#field_template").html());
+		$('form[data-id="'+sourceId+'"] .custom_fields '+field.group).append(fieldTemplate({inputTemplate:inputTemplate,field:field,i:i}));
+	});
+	if(typeof fieldsLoaded == "function"){
+		fieldsLoaded();
+	}
+	//$('form[data-id="'+sourceId+'"] .custom_fields').append('<div class="buttons"><button class="configSubmit" value="Save" >Save</button></div>');
+	$('<button id="reset" />').text('Reset All to default').appendTo('#wrapper');
+}
+
+function makeCopyField(id, sourceId){
+	var num = $('form[data-id="'+sourceId+'"] #field-'+id+' input,'+' form[data-id="'+sourceId+'"] #field-'+id+' textarea').length;
+	var field = configDef.fields[id];
+	
+	var template = _.template('<%= inputTemplate[field.type]({name:"",id:""}) %>');
+	$('form[data-id="'+sourceId+'"] #field-'+id+' .field_wrap').append(template({field:field}));
+}
+function renumberCopyField(id, sourceId){
+$('form[data-id="'+sourceId+'"] #field-'+id+' .del_field').remove();
+var fields = $('form[data-id="'+sourceId+'"] #field-'+id+' input,'+'form[data-id="'+sourceId+'"] #field-'+id+' textarea');
+	fields.each(function(num){
+		var fieldId = 'data-'+id+'-'+num;
+		var fieldName = 'data['+id+']['+num+']';
+		$(this).attr({'name':fieldName,'id':fieldId});
+		if(fields.length >1){
+			$('<button data-target-id='+id+' data-field-num='+num+'><i class="fa fa-minus"></i></button>').addClass('del_field').insertAfter($('form[data-id="'+sourceId+'"] #'+fieldId));
+		}
+	});
+}
+function makeControls(){
+	var controls_set = $('<fieldset id="controls" />');
+	$('<legend />').html('Controls').appendTo(controls_set);
+	if(typeof configDef.controls.play !== 'undefined'){
+		$('<button />').html('<i class="fa fa-play"></i>').data({targetFunc:configDef.controls.play}).appendTo(controls_set);
+	}
+	if(typeof configDef.controls.pause !== 'undefined'){
+		$('<button />').html('<i class="fa fa-pause"></i>').data({targetFunc:configDef.controls.pause}).appendTo(controls_set);
+	}
+	if(typeof configDef.controls.rewind !== 'undefined'){
+		$('<button />').html('<i class="fa fa-step-backward"></i>').data({targetFunc:configDef.controls.rewind}).appendTo(controls_set);
+	}
+	controls_set.prependTo('body');
+}
+function makeDisplay(){
+	var display_set = $('<fieldset id="display" />');
+	$('<legend />').html('Display').appendTo(display_set);
+	if(configDef.resize){
+		var wrapper = $('<div />').html(' x ').appendTo(display_set);
+		$('<input />').attr({name:'res_width',id:'res_width',type:'text'}).prependTo(wrapper);
+		$('<input />').attr({name:'res_height',id:'res_height',type:'text'}).appendTo(wrapper);
+		var tip_link = $('<div>?</div>').addClass('tip_link').prependTo(wrapper);
+		$('<div />').html('<div class="tip_link">?</div><h3>'+'Custom Resolution'+'</h3><p>'+'Enter Custom Resolution or 0 for auto resolution').addClass('tip_text').appendTo(tip_link);
+		$('<label />').html('Resolution').prependTo(wrapper);
+	}
+	if(configDef.css){
+		var wrapper = $('<div />').appendTo(display_set);
+		$('<textarea />').attr({name:'custom_css',id:'custom_css'}).appendTo(wrapper);
+		var tip_link = $('<div>?</div>').addClass('tip_link').prependTo(wrapper);
+		$('<div />').html('<div class="tip_link">?</div><h3>'+'Custom CSS'+'</h3><p>'+'Enter Custom CSS rules').addClass('tip_text').appendTo(tip_link);
+		$('<label />').html('CSS').prependTo(wrapper);
+	}
+	display_set.appendTo('body');
+}
+
+
+/*function saveFields(sourceId) {
+	var customData = $('form[data-id="'+sourceId+'"]').serializeObject();
+	configObjs[sourceId].data = customData.data;
+	if(configDef.resize) {
+		configObjs[sourceId].resolution = {w:$('#res_width').val(),h:$('#res_height').val()};
+	}
+	if(configDef.css){
+		configObjs[sourceId].css = $('#custom_css').val();
+	}
+	
+	if(xjs.Environment.isSourceConfig()){
+	Source.getCurrentSource().then(function (mySource){
+		mySource.requestSaveConfig(configObjs[sourceId]);
+		//propsWindow.closeConfig();
+		});
+	}
+	else {
+		var mySource;
+		var sourceCName;
+		Scene.searchSourcesById(sourceId).then(function (source){
+			mySource = source;
+			return mySource.getCustomName();
+			}).then(function(cname){
+				sourceCName = cname;
+				return mySource.getName();
+			}).then(function (name){
+				var re = /.*[\\\/](.*)/gmi;
+				var result = re.exec(name);
+				return Scene.searchSourcesByName(result[1]);
+			}).then(function(sources){
+				console.log(sources);
+				sources.forEach(function(source,i){
+					source.getCustomName().then(function(name){
+						if(name == sourceCName){
+							source.requestSaveConfig(configObjs[sourceId]);
+						}
+					});
+				});
+			});
+		}
+
+}*/
+
+function updateFields(configObjs, sourceId){
+
+	configObjs[sourceId].data.forEach(function (value, i){
+		if(typeof value === 'object'){
+			value.forEach(function(sub,num){
+				if(num>0){
+					makeCopyField(i,sourceId);
+				}
+				
+			});
+			renumberCopyField(i,sourceId);
+			value.forEach(function(sub,num){
+				$('form[data-id="'+sourceId+'"] #data-'+i+'-'+num).val(sub);
+			});
+		}
+		else{
+			$('form[data-id="'+sourceId+'"] #data-'+i).val(value);
+			if($('form[data-id="'+sourceId+'"] #data-'+i).hasClass('hideshow')){
+					var label = (value=='true'?'Hide':'Show');
+
+					$('form[data-id="'+sourceId+'"] #data-'+i).prev('button.hideshow').html(label);
+			}
+			
+
+		}	
+	});
+	if(configDef.resize) {
+		$('#res_width').val(configObjs[sourceId].resolution.w);
+		$('#res_height').val(configObjs[sourceId].resolution.h); 
+	}
+	if(configDef.css){
+		$('#custom_css').val(configObjs[sourceId].css);		
+	}
+}
+
+
+
+  </script>
+</head>
+<body>
+<div id="wrapper"></div>
+</body>
+</html>

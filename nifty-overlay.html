@@ -148,30 +148,6 @@ var sourceId;
 			makeConfig({id:values[0],name:values[1]});
 		});
 	});
-		/*	socket.on(sourceName, function(data){
-				configObjs[sourceId].data = data;
-				updateFields(configObjs,sourceId);
-			});
-		});
-		return mySource.loadConfig();
-	}).then(function(config) {
-		configObjs[sourceId] = config;
-		configDef = config.configDef;
-		makeFields(sourceId,sourceName);
-		if(configDef.controls) {
-			makeControls();
-		}
-		if(configDef.resize || configDef.css) {
-			makeDisplay();
-		}
-		socket.emit('xsplit_init', {name:sourceName,id:sourceId}, function(msg){
-			if(typeof msg.initObj.data !== 'undefined'){
-			configObjs[sourceId].data = msg.initObj.data;
-			}
-			updateFields(configObjs,sourceId);
-		});
-
-	});*/
 }
 
 socket.on('xsplit_info_receive', function(msg){
@@ -183,72 +159,6 @@ socket.on('xsplit_info_receive', function(msg){
 	}
 });
 
-
-/*if(xjs.Environment.isExtension()){
-	xjs.ready().then(function(){
-		Scene.getActiveScene().then(function(scene){
-			scene.getSceneNumber().then(function(num) {
-				activeScene = num;
-				initConfigExtension(scene);
-			});
-		});
-	});
-}
-extensionWindow.on('scene-load', function(sceneNum){
-	xjs.ready().then(function(){
-		Scene.getActiveScene().then(function(scene){
-			scene.getSceneNumber().then(function(num) {
-				activeScene = num;
-				initConfigExtension(scene);
-			});
-		});
-	});
-});
-
-
-function initConfigExtension(currentScene){
-$('#wrapper').empty();
-makeSceneMenu();
-Scene.initializeScenes().then(function(val) {
-	if(val===true) {
-		currentScene.getSources().then(function(sources){
-		sources.forEach(function(source,i){
-			var sourceId;
-			source.getType().then(function(type){
-
-				if(type == 8){
-				 source.getId().then(function(myId){
-					sourceId = myId;
-					return source.loadConfig();
-				 }).then(function(config){
-						if(typeof config.configDef !== 'undefined'){
-							configObjs[sourceId] = config;
-							configDef = configObjs[sourceId].configDef;
-							makeFields(sourceId);
-							if(configDef.controls) {
-								makeControls();
-							}
-							if(configObjs[sourceId].data.length == 0){
-								configDef.fields.forEach(function(field,i){
-									if(typeof field.default !== 'undefined'){
-										configObjs[sourceId].data[i] = field.default;
-									}
-									else {
-										configObjs[sourceId].data[i] = "";
-									}
-								});
-							}
-							updateFields(configObjs[sourceId], sourceId);
-						}
-					});
-				}
-			});
-		});
-	});
-	}
-	});
-}
-*/
 $(function(){
 	if(!xjs.Environment.isSourceConfig()){
 		initConfigExtension();
@@ -418,50 +328,6 @@ function makeDisplay(){
 	}
 	display_set.appendTo('body');
 }
-
-
-/*function saveFields(sourceId) {
-	var customData = $('form[data-id="'+sourceId+'"]').serializeObject();
-	configObjs[sourceId].data = customData.data;
-	if(configDef.resize) {
-		configObjs[sourceId].resolution = {w:$('#res_width').val(),h:$('#res_height').val()};
-	}
-	if(configDef.css){
-		configObjs[sourceId].css = $('#custom_css').val();
-	}
-	
-	if(xjs.Environment.isSourceConfig()){
-	Source.getCurrentSource().then(function (mySource){
-		mySource.requestSaveConfig(configObjs[sourceId]);
-		//propsWindow.closeConfig();
-		});
-	}
-	else {
-		var mySource;
-		var sourceCName;
-		Scene.searchSourcesById(sourceId).then(function (source){
-			mySource = source;
-			return mySource.getCustomName();
-			}).then(function(cname){
-				sourceCName = cname;
-				return mySource.getName();
-			}).then(function (name){
-				var re = /.*[\\\/](.*)/gmi;
-				var result = re.exec(name);
-				return Scene.searchSourcesByName(result[1]);
-			}).then(function(sources){
-				console.log(sources);
-				sources.forEach(function(source,i){
-					source.getCustomName().then(function(name){
-						if(name == sourceCName){
-							source.requestSaveConfig(configObjs[sourceId]);
-						}
-					});
-				});
-			});
-		}
-
-}*/
 
 function updateFields(configObjs, sourceId){
 
